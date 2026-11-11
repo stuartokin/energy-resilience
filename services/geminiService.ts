@@ -426,7 +426,7 @@ const fetchWithTimeout = async (url: string, ms = 6000) => {
 };
 
 // Live GB grid snapshot: Elexon (frequency, demand) + NESO Carbon Intensity.
-export const fetchNESOPowerData = async (): Promise<{demand: number, frequency: number, carbonIntensity: number}> => {
+export const fetchNESOPowerData = async (): Promise<{demand: number, frequency: number, carbonIntensity: number, estimated?: boolean}> => {
     let demand = 0;
     let frequency = 0;
     let carbonIntensity = 0;
@@ -466,7 +466,8 @@ export const fetchNESOPowerData = async (): Promise<{demand: number, frequency: 
         logSystemError("Elexon / NESO fetch error", e.message, "warning");
     }
 
-    // Fallbacks (only used if the open data services are unreachable)
+    // Fallbacks (only used if the open data services are unreachable) - flagged as estimates.
+    const estimated = demand === 0 || frequency === 0;
     if (demand === 0) {
         logSystemError("Live demand unavailable", "Using estimated demand profile", "warning");
         const hour = new Date().getHours();
@@ -475,48 +476,48 @@ export const fetchNESOPowerData = async (): Promise<{demand: number, frequency: 
     if (frequency === 0) frequency = 50.0 + ((Math.random() - 0.5) * 0.1);
     if (carbonIntensity === 0) carbonIntensity = 150;
 
-    return { demand, frequency, carbonIntensity };
+    return { demand, frequency, carbonIntensity, estimated };
+};
+
+// GB generation mix. Primary: NESO Carbon Intensity API. Backup: Elexon live generation by fuel.
+// If both fail, returns null (the app hides the figures) - it never shows made-up numbers.
+const summariseMix = (from: string, to: string, mix: { fuel: string, perc: number }[]): GenerationMix => {
+    const getPerc = (fuel: string) => mix.find(x => x.fuel === fuel)?.perc || 0;
+    const r1 = (v: number) => Math.round(v * 10) / 10;
+    const renewables = getPerc('wind') + getPerc('solar') + getPerc('hydro') + getPerc('biomass');
+    const fossil = getPerc('gas') + getPerc('coal') + getPerc('oil');
+    return { from, to, generation: mix, renewablesPerc: r1(renewables), fossilPerc: r1(fossil), lowCarbonPerc: r1(renewables + getPerc('nuclear')) };
 };
 
 export const fetchGenerationMix = async (): Promise<GenerationMix | null> => {
-    const generateFallback = () => {
-         return {
-            from: new Date().toISOString(),
-            to: new Date().toISOString(),
-            generation: [
-                { fuel: 'gas', perc: 35 },
-                { fuel: 'wind', perc: 28 },
-                { fuel: 'nuclear', perc: 15 },
-                { fuel: 'biomass', perc: 8 },
-                { fuel: 'solar', perc: 6 },
-                { fuel: 'imports', perc: 5 },
-                { fuel: 'hydro', perc: 2 },
-                { fuel: 'coal', perc: 1 }
-            ],
-            renewablesPerc: 44,
-            fossilPerc: 36,
-            lowCarbonPerc: 59
-        };
-    };
-
     try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 3000);
-        const response = await fetch('https://api.carbonintensity.org.uk/generation', { signal: controller.signal });
-        clearTimeout(timeoutId);
-        if (!response.ok) throw new Error("Failed to fetch generation mix");
-        const data = await response.json();
-        const genData = data.data; 
-        if (!genData || !genData.generation) return generateFallback();
-        const mix = genData.generation;
-        const getPerc = (fuel: string) => mix.find((x: any) => x.fuel === fuel)?.perc || 0;
-        const renewables = getPerc('wind') + getPerc('solar') + getPerc('hydro') + getPerc('biomass');
-        const fossil = getPerc('gas') + getPerc('coal');
-        const lowCarbon = renewables + getPerc('nuclear');
-        return { from: genData.from, to: genData.to, generation: mix, renewablesPerc: renewables, fossilPerc: fossil, lowCarbonPerc: lowCarbon };
+        const response = await fetchWithTimeout('https://api.carbonintensity.org.uk/generation', 8000);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const genData = (await response.json()).data;
+        if (genData?.generation?.length) return summariseMix(genData.from, genData.to, genData.generation);
+        throw new Error('No generation data');
     } catch (e: any) {
-        logSystemError("Gen Mix Fetch Failed", e.message, "warning");
-        return generateFallback();
+        logSystemError("NESO generation mix unavailable - trying Elexon", e.message, "warning");
+    }
+    try {
+        const resp = await fetchWithTimeout(`${ELEXON_API}/generation/outturn/current?format=json`, 8000);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const rows: any[] = await resp.json();
+        const groups: Record<string, number> = {};
+        const map: Record<string, string> = { CCGT: 'gas', OCGT: 'gas', COAL: 'coal', NUCLEAR: 'nuclear', WIND: 'wind', BIOMASS: 'biomass', NPSHYD: 'hydro', PS: 'storage', OIL: 'oil', OTHER: 'other' };
+        rows.forEach(r => {
+            const fuel = r.fuelType?.startsWith('INT') ? 'imports' : map[r.fuelType] || 'other';
+            const mw = Math.max(0, r.currentUsage || 0);
+            groups[fuel] = (groups[fuel] || 0) + mw;
+        });
+        const total = Object.values(groups).reduce((a, v) => a + v, 0);
+        if (!total) throw new Error('No data');
+        const mix = Object.entries(groups).map(([fuel, mw]) => ({ fuel, perc: Math.round((mw / total) * 1000) / 10 }));
+        const now = new Date().toISOString();
+        return summariseMix(now, now, mix);
+    } catch (e: any) {
+        logSystemError("Generation mix unavailable", e.message, "warning");
+        return null;
     }
 };
 
@@ -1366,7 +1367,8 @@ export const chatWithAnalyst = async (history: ChatMessage[], context: any, newM
 
 LIVE DATA FROM THE APP (fetched in the last few minutes - treat as current):
 - Region: ${context.region}
-- GB demand: ${neso?.demand ? Math.round(neso.demand) + ' MW' : 'unknown'}; frequency: ${neso?.frequency ? neso.frequency.toFixed(3) + ' Hz' : 'unknown'}; carbon intensity: ${neso?.carbonIntensity ? neso.carbonIntensity + ' gCO2/kWh' : 'unknown'}
+- GB demand: ${neso?.estimated ? 'unknown (live feed unavailable)' : neso?.demand ? Math.round(neso.demand) + ' MW' : 'unknown'}; frequency (single latest reading): ${neso?.estimated ? 'unknown' : neso?.frequency ? neso.frequency.toFixed(3) + ' Hz' : 'unknown'}; carbon intensity: ${neso?.carbonIntensity ? neso.carbonIntensity + ' gCO2/kWh' : 'unknown'}
+- Official NESO system warnings (Elexon SYSWARN, last 48h): ${context.systemWarnings || 'none'}
 - Generation mix: ${context.generationMix || 'unknown'}
 - Assets on the map: ${context.assetCount}
 - Power station / interconnector outages (Elexon REMIT, live): ${context.generatorOutages || 'none loaded'}
@@ -1382,6 +1384,7 @@ RULES:
 - Ground answers in the live data above where relevant, and say when you're using it.
 - Use Google Search for facts not in the data above, and say what you found.
 - Be clear about uncertainty. Never invent figures, incidents, suppliers or vulnerabilities. If you don't know, say so.
+- When judging how "stretched" or "tight" the system is, give most weight to official NESO notices (Electricity Margin Notices, Capacity Market Notices, demand control warnings). Planned outages of several GW are normal, especially outside winter peaks. Frequency between 49.8 and 50.2 Hz is within normal operating limits, and one reading says little on its own. Don't overstate stress.
 - Keep answers concise and practical (resilience, cyber and physical risk, mitigations, regulation).
 - If the user asks to see, find, zoom to or show a place or asset, end your reply with one line exactly like:
   MAP: <latitude>, <longitude>, <zoom 5-16>`;

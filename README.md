@@ -139,6 +139,7 @@ Then open http://localhost:3000.
 | [Elexon REMIT](https://bmrs.elexon.co.uk/remit) | Power station / interconnector outages | No |
 | [OSUKED Power Station Dictionary](https://github.com/OSUKED/Power-Station-Dictionary) | Where each power station unit is (MIT licence) | No |
 | [NESO DNO licence areas](https://www.neso.energy/data-portal/gis-boundaries-gb-dno-license-areas) | DNO boundaries | No |
+| [Elexon system warnings (SYSWARN)](https://bmrs.elexon.co.uk/system-warnings) | NESO margin and demand-control notices | No |
 | [Elexon generation by fuel](https://bmrs.elexon.co.uk/generation-by-fuel-type) | Interconnector flows | No |
 | [NESO Carbon Intensity (regional)](https://carbonintensity.org.uk) | Carbon intensity and mix by DNO area | No |
 | [Environment Agency flood monitoring](https://environment.data.gov.uk/flood-monitoring/doc/reference) | Flood warnings (England only) | No |

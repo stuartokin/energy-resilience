@@ -1,5 +1,5 @@
 import React from 'react';
-import { InterconnectorFlow, GasSnapshot, WeatherWarning, FloodWarning } from '../services/liveSystems';
+import { InterconnectorFlow, GasSnapshot, WeatherWarning, FloodWarning, SystemWarning } from '../services/liveSystems';
 import { GeneratorOutage } from '../types';
 
 interface Props {
@@ -8,6 +8,7 @@ interface Props {
     weather: WeatherWarning[];
     floods: { warnings: FloodWarning[], alerts: number } | null;
     generatorOutages: GeneratorOutage[];
+    systemWarnings: SystemWarning[];
     updated: Date | null;
 }
 
@@ -24,12 +25,23 @@ const Section: React.FC<{ title: string, source: string, children: React.ReactNo
     </div>
 );
 
-const LiveSystemsPanel: React.FC<Props> = ({ flows, gas, weather, floods, generatorOutages, updated }) => {
+const LiveSystemsPanel: React.FC<Props> = ({ flows, gas, weather, floods, generatorOutages, systemWarnings, updated }) => {
     const netImport = flows.reduce((a, f) => a + f.mw, 0);
     const genOutMW = generatorOutages.reduce((a, g) => a + g.unavailableMW, 0);
     const genUnplannedMW = generatorOutages.filter(g => !g.planned).reduce((a, g) => a + g.unavailableMW, 0);
     return (
         <div className="text-xs text-slate-300 space-y-1 max-h-[60vh] overflow-y-auto custom-scrollbar pr-1">
+            <Section title="System notices" source="NESO via Elexon">
+                {systemWarnings.length === 0
+                    ? <div className="text-[10px] text-green-400">No margin or demand-control notices (48h)</div>
+                    : systemWarnings.slice(0, 3).map((w, i) => (
+                        <div key={i} className="text-[10px] mb-1" title={w.text}>
+                            <span className="text-red-400 font-bold">{w.type}</span>
+                            <span className="text-slate-500"> · {new Date(w.published).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })}</span>
+                        </div>
+                    ))}
+            </Section>
+
             <Section title="Interconnectors" source="Elexon">
                 <div className="text-[11px] mb-1">Net {netImport >= 0 ? 'import' : 'export'}: <b className="text-white">{Math.abs(netImport).toLocaleString()} MW</b></div>
                 <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">

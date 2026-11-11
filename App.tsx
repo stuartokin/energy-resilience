@@ -29,7 +29,7 @@ import GenerationListPanel from './components/GenerationListPanel';
 import GridHistoryModal from './components/GridHistoryModal';
 import AiKeyModal from './components/AiKeyModal';
 import LiveSystemsPanel from './components/LiveSystemsPanel';
-import { fetchInterconnectorFlows, fetchRegionalCarbon, fetchFloodWarnings, fetchGasSnapshot, fetchWeatherWarnings, InterconnectorFlow, RegionalCarbon, FloodWarning, GasSnapshot, WeatherWarning } from './services/liveSystems';
+import { fetchInterconnectorFlows, fetchRegionalCarbon, fetchFloodWarnings, fetchGasSnapshot, fetchWeatherWarnings, fetchSystemWarnings, InterconnectorFlow, RegionalCarbon, FloodWarning, GasSnapshot, WeatherWarning, SystemWarning } from './services/liveSystems';
 import { hasAiKey, onAiKeyChange, onAiKeyRequired } from './services/aiKey';
 
 import { 
@@ -155,6 +155,7 @@ export const App: React.FC = () => {
     const [floods, setFloods] = useState<{ warnings: FloodWarning[], alerts: number } | null>(null);
     const [gas, setGas] = useState<GasSnapshot | null>(null);
     const [weatherWarnings, setWeatherWarnings] = useState<WeatherWarning[]>([]);
+    const [systemWarnings, setSystemWarnings] = useState<SystemWarning[]>([]);
     const [liveSystemsUpdated, setLiveSystemsUpdated] = useState<Date | null>(null);
     useEffect(() => {
         const load = async () => {
@@ -164,6 +165,8 @@ export const App: React.FC = () => {
                 fetchFloodWarnings().then(setFloods),
                 fetchGasSnapshot().then(setGas),
                 fetchWeatherWarnings().then(setWeatherWarnings),
+                fetchSystemWarnings().then(setSystemWarnings),
+                fetchGenerationMix().then(m => { if (m) setGenerationMix(m); }),
             ]);
             setLiveSystemsUpdated(new Date());
         };
@@ -182,7 +185,7 @@ export const App: React.FC = () => {
     }, []);
     const [historicalOutages, setHistoricalOutages] = useState<OutageEvent[]>([]);
     const [showHistorical, setShowHistorical] = useState(false);
-    const [nesoData, setNesoData] = useState({ demand: 0, frequency: 50.0, carbonIntensity: 0 });
+    const [nesoData, setNesoData] = useState<{ demand: number, frequency: number, carbonIntensity: number, estimated?: boolean }>({ demand: 0, frequency: 50.0, carbonIntensity: 0 });
     const [generationMix, setGenerationMix] = useState<GenerationMix | null>(null);
     const [lastOutageCheck, setLastOutageCheck] = useState<Date>(new Date());
     const [isOutageRefreshing, setIsOutageRefreshing] = useState(false);
@@ -1677,7 +1680,7 @@ export const App: React.FC = () => {
                                         <span className="block text-slate-500 font-bold uppercase flex items-center gap-1">
                                             Grid Demand <ChartBarIcon className="w-3 h-3" />
                                         </span>
-                                        <span className="text-white font-mono text-base">{(nesoData.demand / 1000).toFixed(2)} GW</span>
+                                        <span className="text-white font-mono text-base">{(nesoData.demand / 1000).toFixed(2)} GW{nesoData.estimated && <span className="text-[9px] text-amber-400 ml-1" title="Live feed unavailable - estimated">est.</span>}</span>
                                     </div>
                                     <div 
                                         className="p-1 rounded cursor-pointer hover:bg-slate-800 transition-colors"
@@ -1761,7 +1764,7 @@ export const App: React.FC = () => {
                                     <button onClick={() => toggleMinimize('live_systems')} className="p-1 bg-slate-900/50 rounded hover:bg-slate-800 text-slate-400 hover:text-white"><MinusIcon className="w-3 h-3" /></button>
                                 </div>
                                 <h3 className="text-[10px] font-bold text-white uppercase tracking-widest mb-2 flex items-center gap-1"><SignalIcon className="w-3 h-3 text-cyan-400" /> Live Systems</h3>
-                                <LiveSystemsPanel flows={icFlows} gas={gas} weather={weatherWarnings} floods={floods} generatorOutages={generatorOutages} updated={liveSystemsUpdated} />
+                                <LiveSystemsPanel flows={icFlows} gas={gas} weather={weatherWarnings} floods={floods} generatorOutages={generatorOutages} systemWarnings={systemWarnings} updated={liveSystemsUpdated} />
                             </div>
                         </DraggablePanel>
                     )}
@@ -2018,6 +2021,7 @@ export const App: React.FC = () => {
                                     outages={[...liveOutages, ...(showHistorical ? historicalOutages : [])]}
                                     onMapAction={handleMapAction}
                                     generationMix={generationMix}
+                                    systemWarningsSummary={systemWarnings.length ? systemWarnings.slice(0, 5).map(w => `${w.type} (${w.published}): ${w.text.slice(0, 200)}`).join(' | ') : ''}
                                     liveSystemsSummary={[
                                         icFlows.length ? `Interconnector flows (MW, +import/-export): ${icFlows.map(f => `${f.name} ${f.mw}`).join(', ')}` : '',
                                         gas ? `Gas NTS: demand ${gas.ntsDemand} mcm/d, supply ${gas.totalSupply} mcm/d, linepack ${gas.linepack} mcm, to power stations ${gas.powerStations} mcm/d` : '',

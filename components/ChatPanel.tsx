@@ -9,16 +9,17 @@ interface ChatPanelProps {
     activeScenarios: RiskScenario[];
     assetCount: number; // Optimization: Pass count only
     regionName: string;
-    nesoData: { demand: number, frequency: number, carbonIntensity: number };
+    nesoData: { demand: number, frequency: number, carbonIntensity: number, estimated?: boolean };
     outages: OutageEvent[];
     onMapAction: (lat: number, lng: number, zoom: number) => void;
     generationMix?: GenerationMix | null;
     timelineNow?: string;
     generatorOutagesSummary?: string;
     liveSystemsSummary?: string;
+    systemWarningsSummary?: string;
 }
 
-const ChatPanel: React.FC<ChatPanelProps> = ({ isOpen, activeScenarios, assetCount, regionName, nesoData, outages, onMapAction, generationMix, timelineNow, generatorOutagesSummary, liveSystemsSummary }) => {
+const ChatPanel: React.FC<ChatPanelProps> = ({ isOpen, activeScenarios, assetCount, regionName, nesoData, outages, onMapAction, generationMix, timelineNow, generatorOutagesSummary, liveSystemsSummary, systemWarningsSummary }) => {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
     
@@ -65,6 +66,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ isOpen, activeScenarios, assetCou
             timelineNow: timelineNow || '',
             generatorOutages: generatorOutagesSummary || '',
             liveSystems: liveSystemsSummary || '',
+            systemWarnings: systemWarningsSummary || '',
             outageCount: outages.length,
             activeOutages: outages.slice(0, 25).map(o => `${o.locationName} (${o.source}): ${String(o.description).slice(0, 80)}, ${o.consumersAffected || 'unknown'} customers, status ${o.status}`).join("; ")
         };

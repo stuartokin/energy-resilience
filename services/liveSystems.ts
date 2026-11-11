@@ -140,3 +140,23 @@ export const fetchWeatherWarnings = async (): Promise<WeatherWarning[]> => {
         return { ...w, lat: key ? MET_REGIONS[key][0] : undefined, lng: key ? MET_REGIONS[key][1] : undefined };
     });
 };
+
+// ---------- NESO system warnings (Elexon SYSWARN) ----------
+export interface SystemWarning { type: string; text: string; published: string; }
+
+// Notices that matter for security of supply. Routine trading notices (e.g. SO-SO trades) are left out.
+const SIGNIFICANT = /MARGIN|CAPACITY MARKET|DEMAND CONTROL|DEMAND REDUCTION|NRAPM|EMERGENCY|SYSTEM WARNING|HIGH RISK|ELECTRICITY MARGIN|BLACK START|DEFICIT/i;
+
+export const fetchSystemWarnings = async (): Promise<SystemWarning[]> => {
+    const now = new Date();
+    const from = new Date(now.getTime() - 48 * 3600000).toISOString();
+    const json = await fetchJson(`https://data.elexon.co.uk/bmrs/api/v1/datasets/SYSWARN?publishDateTimeFrom=${from}&publishDateTimeTo=${now.toISOString()}&format=json`);
+    return (json.data || [])
+        .filter((w: any) => SIGNIFICANT.test(`${w.warningType} ${w.warningText}`))
+        .map((w: any) => ({
+            type: w.warningType || 'System warning',
+            text: String(w.warningText || '').replace(/\\r\\n|\r\n|\\n/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 400),
+            published: w.publishTime,
+        }))
+        .sort((a: SystemWarning, b: SystemWarning) => b.published.localeCompare(a.published));
+};
