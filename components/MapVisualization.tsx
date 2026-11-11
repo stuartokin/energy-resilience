@@ -417,9 +417,10 @@ const MapVisualization: React.FC<MapProps> = ({
                 <div style="min-width:200px;padding:10px 12px">
                     <div style="font-weight:bold;margin-bottom:4px;color:#f87171">&#9888; ${esc(outage.locationName)}</div>
                     <div style="font-size:12px">${esc(outage.description)}</div>
-                    <div style="font-size:12px;font-weight:bold;margin-top:4px">Affected: ${Number(outage.consumersAffected || 0).toLocaleString()}</div>
+                    <div style="font-size:12px;font-weight:bold;margin-top:4px">Customers affected: ${outage.consumersAffected ? Number(outage.consumersAffected).toLocaleString() : 'not published'}</div>
                     <div style="font-size:10px;color:#94a3b8">Status: ${esc(outage.status)}</div>
                     <div style="font-size:10px;color:#94a3b8">Source: ${esc(outage.source)}</div>
+                    ${outage.estRestoration && outage.estRestoration !== 'TBC' ? `<div style="font-size:10px;color:#94a3b8">Est. restoration: ${esc(outage.estRestoration)}</div>` : ''}
                 </div>`);
             marker.addTo(layer);
         });
