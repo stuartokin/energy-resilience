@@ -84,6 +84,31 @@ jobs:
 
 Note: GitHub Pages on a **private** repo needs a paid GitHub plan. On a free plan, make the repo public first.
 
+## Live power cuts from every DNO (optional, free)
+
+UK Power Networks and Northern Powergrid work straight away. The other DNOs' feeds can't be read directly by a web page, so a small free **Cloudflare Worker** collects them and passes them to the site.
+
+| DNO | Needs |
+|---|---|
+| NGED, SSEN | Just the Worker |
+| SP Energy Networks, Electricity North West | The Worker + a free API key from each DNO's open-data portal |
+
+**Set up the Worker (about 10 minutes, once):**
+
+1. Sign up free at [dash.cloudflare.com](https://dash.cloudflare.com/sign-up).
+2. Go to **Workers & Pages → Create → Create Worker** (the "Hello World" starter). Name it `energy-outages` and click **Deploy**.
+3. Click **Edit code**, delete everything, paste in the whole of `worker/outages-worker.js`, then click **Deploy**.
+4. Copy the Worker's address, e.g. `https://energy-outages.yourname.workers.dev`. Open it in a browser and add `/outages` to check you see a list.
+5. In this repo, put that address in `config.ts` (`OUTAGE_WORKER_URL`) and upload it.
+
+**Add SPEN and ENWL (optional):**
+
+1. Create free accounts at [SP Energy Networks open data](https://spenergynetworks.opendatasoft.com) and [Electricity North West open data](https://electricitynorthwest.opendatasoft.com).
+2. On each, go to your account → **API keys** → create a key. Request access to the outage dataset if asked.
+3. In Cloudflare, open the Worker → **Settings → Variables and Secrets → Add**, type **Secret**, name `SPEN_API_KEY` (and `ENWL_API_KEY`), paste the key, **Deploy**.
+
+The keys stay in Cloudflare and never appear in this repo or the website. Check ENWL's licence terms before showing its data publicly. The Worker caches results for 2 minutes, so the DNOs are asked at most once every 2 minutes however many people visit. Cloudflare's free plan allows 100,000 requests a day.
+
 ## Running it on your own computer (optional)
 
 Needs [Node.js](https://nodejs.org) 20 or later.
@@ -113,6 +138,6 @@ Then open http://localhost:3000.
 
 Querying OpenStreetMap for the whole of GB is slow and the free public servers are often busy. So each time the site is published (and every Monday), GitHub Actions runs `scripts/build-osm-snapshot.mjs`, which downloads power stations, high-voltage lines, interconnectors and subsea pipelines once and saves them as `data/osm-uk.json` alongside the site. The same step downloads NESO's DNO licence-area boundaries, converts them from British National Grid to latitude/longitude, simplifies them and saves `data/dno-areas.json`. Visitors load that file instantly. If the snapshot can't be built, the site still works and tries OpenStreetMap live instead.
 
-Power cuts shown are real: from UK Power Networks' and Northern Powergrid's live feeds, plus (if you add a Gemini key) incidents found by AI web search, which are labelled "unverified". Other DNOs' live feeds are not yet included, so an empty area does not mean no power cuts.
+Power cuts shown are real: from UK Power Networks' and Northern Powergrid's live feeds, plus (if you add a Gemini key) incidents found by AI web search, which are labelled "unverified". Areas whose DNO feed isn't connected (see the system status panel) may still have power cuts.
 
 Scenario timelines and impacts are illustrative models, not forecasts. Where a live feed is unavailable, the app falls back to estimated values and records that in the system log.

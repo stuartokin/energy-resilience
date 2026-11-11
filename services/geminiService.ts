@@ -3,6 +3,7 @@ import { GoogleGenAI, Modality, Type, FunctionDeclaration } from "@google/genai"
 import { RiskScenario, InfrastructureAsset, TimelineStep, ChatMessage, OutageEvent, GenerationMix, SupplyChainInsight, LogEntry, DNORegion } from '../types';
 import { ASSET_TYPES, DEEP_SEARCH_PROTOCOLS, REGIONS, UK_DNO_REGIONS } from '../constants';
 import { getAiKey, onAiKeyChange, requestAiKey } from './aiKey';
+import { OUTAGE_WORKER_URL } from '../config';
 
 let aiClient: GoogleGenAI | null = null;
 let isAudioQuotaExceeded = false;
@@ -73,6 +74,11 @@ export const getApiSystemStatus = () => {
         },
         { org: "UK Power Networks", status: "Operational", keyStatus: "Open Data", type: "Live Power Cuts" },
         { org: "Northern Powergrid", status: "Operational", keyStatus: "Open Data", type: "Live Power Cuts" },
+        ...(OUTAGE_WORKER_URL
+            ? (workerSourceStatus.length ? workerSourceStatus : [{ name: 'NGED / SSEN / SPEN / ENWL', ok: false, error: 'Waiting for first update' } as any]).map(sr => ({
+                org: sr.name, status: sr.ok ? "Operational" : "Not connected", keyStatus: sr.ok ? "Open Data" : (sr.error || 'Unavailable'), type: "Live Power Cuts"
+            }))
+            : [{ org: "NGED, SSEN, SPEN, ENWL", status: "Not connected", keyStatus: "Needs Cloudflare Worker", type: "Live Power Cuts" }]),
         { org: "Elexon Insights (BMRS)", status: "Operational", keyStatus: "Open Data", type: "Frequency & Demand" },
         { org: "NESO Carbon Intensity", status: "Operational", keyStatus: "Open Data", type: "Generation Mix" },
         { org: "OpenStreetMap / Overpass", status: "Operational", keyStatus: "Open Data", type: "Infrastructure & Search" },
@@ -922,6 +928,24 @@ const fetchNpgLiveFaults = async (): Promise<OutageEvent[]> => {
     }
 };
 
+// Live power cuts from NGED, SSEN, SPEN and ENWL, collected by the site's Cloudflare Worker.
+export let workerSourceStatus: { id: string, name: string, ok: boolean, count: number, error?: string }[] = [];
+const fetchWorkerOutages = async (): Promise<OutageEvent[]> => {
+    if (!OUTAGE_WORKER_URL) return [];
+    try {
+        const resp = await fetchWithTimeout(OUTAGE_WORKER_URL.replace(/\/$/, '') + '/outages', 20000);
+        if (!resp.ok) throw new Error(`Worker HTTP ${resp.status}`);
+        const json = await resp.json();
+        workerSourceStatus = json.sources || [];
+        workerSourceStatus.filter(sr => !sr.ok).forEach(sr => logSystemError(`${sr.name} live faults unavailable`, sr.error, "warning"));
+        return (json.outages || []).filter((o: OutageEvent) => typeof o.lat === 'number' && typeof o.lng === 'number');
+    } catch (e: any) {
+        logSystemError("Power cut collector (Cloudflare Worker) unavailable", e.message, "warning");
+        workerSourceStatus = [];
+        return [];
+    }
+};
+
 // Real outages only: UKPN's live feed for the UK, plus AI web search if the visitor has added a key.
 // (Earlier versions invented "simulated" incidents when nothing was found - removed.)
 export const fetchRealTimeOutages = async (regionName: string): Promise<OutageEvent[]> => {
@@ -934,7 +958,7 @@ export const fetchRealTimeOutages = async (regionName: string): Promise<OutageEv
 
     const isUK = (REGIONS.find(r => r.name === regionName)?.id || 'UK') === 'UK';
     const livePromise = isUK
-        ? Promise.all([fetchUkpnLiveFaults(), fetchNpgLiveFaults()]).then(r => r.flat())
+        ? Promise.all([fetchUkpnLiveFaults(), fetchNpgLiveFaults(), fetchWorkerOutages()]).then(r => r.flat())
         : Promise.resolve([] as OutageEvent[]);
 
     let aiOutages: OutageEvent[] = [];
@@ -1227,7 +1251,7 @@ LIVE DATA FROM THE APP (fetched in the last few minutes - treat as current):
 - Generation mix: ${context.generationMix || 'unknown'}
 - Assets on the map: ${context.assetCount}
 - Live power cuts shown (${context.outageCount}): ${context.activeOutages || 'none'}
-- Note: live power-cut data currently covers UK Power Networks and Northern Powergrid areas only, plus any AI web-search results.
+- Live power-cut sources connected: UK Power Networks, Northern Powergrid${OUTAGE_WORKER_URL ? ', plus ' + (workerSourceStatus.filter(x => x.ok).map(x => x.name).join(', ') || 'none of NGED/SSEN/SPEN/ENWL yet') : ''}. Areas without a connected feed may still have power cuts.
 
 SCENARIO BEING SIMULATED: ${scenarios.length === 0 ? 'none' : scenarios.map(sc =>
     `${sc.name} [${sc.category}] - ${sc.description} Duration ${sc.durationDays} days, peak ${sc.peakConsumersAffected?.toLocaleString?.() ?? sc.peakConsumersAffected} customers affected, areas: ${(sc.affectedDistricts || []).join(', ') || sc.region}. Note: scenario figures are illustrative assumptions, not forecasts.`).join(' | ')}
