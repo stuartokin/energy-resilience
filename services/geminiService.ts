@@ -765,19 +765,41 @@ export const fetchGeneratorOutages = async (): Promise<GeneratorOutage[]> => {
         const latest = new Map<string, any>();
         messages.forEach(m => { const p = latest.get(m.mrid); if (!p || p.revisionNumber < m.revisionNumber) latest.set(m.mrid, m); });
         const lookup = await loadBmuLookup();
-        const result: GeneratorOutage[] = Array.from(latest.values())
-            .filter(m => m.eventStatus === 'Active' && m.assetId !== 'NO_ASSET' && (m.unavailableCapacity || 0) > 0)
+        const nowMs = now.getTime();
+        const YEAR = 365 * 86400000;
+        const active = Array.from(latest.values()).filter(m => {
+            if (m.eventStatus !== 'Active' || m.assetId === 'NO_ASSET' || !(m.unavailableCapacity > 0)) return false;
+            // Closed stations stay "unavailable" in REMIT for decades (e.g. Ratcliffe until 2050).
+            // Treat anything lasting more than 2 years, or ending 3+ years from now, as a closure, not an outage.
+            const start = Date.parse(m.eventStartTime), end = Date.parse(m.eventEndTime);
+            if (isFinite(start) && isFinite(end) && end - start > 2 * YEAR) return false;
+            if (isFinite(end) && end - nowMs > 3 * YEAR) return false;
+            return true;
+        });
+        // One entry per physical unit: overlapping notices (e.g. a planned and an unplanned outage on the
+        // same unit) are not added together; take the largest. Interconnector import/export units
+        // (I_IEG-x / I_IED-x) are the same cable, so they count once.
+        const unitKey = (m: any) => String(m.affectedUnit || m.assetId).replace(/^I_IE[GD]-/, 'I_IE-');
+        const perUnit = new Map<string, any>();
+        active.forEach(m => {
+            const k = unitKey(m);
+            const prev = perUnit.get(k);
+            const anyUnplanned = m.unavailabilityType !== 'Planned' || (prev && prev._anyUnplanned);
+            if (!prev || m.unavailableCapacity > prev.unavailableCapacity) perUnit.set(k, { ...m, _anyUnplanned: anyUnplanned });
+            else prev._anyUnplanned = anyUnplanned;
+        });
+        const result: GeneratorOutage[] = Array.from(perUnit.values())
             .map(m => {
                 const site = locateUnit(lookup, [m.affectedUnit, m.assetId, m.affectedUnitEIC]);
                 return {
                     id: m.mrid,
-                    unit: m.affectedUnit || m.assetId || 'Unknown unit',
+                    unit: String(m.affectedUnit || m.assetId || 'Unknown unit').replace(/^I_IE[GD]-/, 'Interconnector '),
                     siteName: site?.name,
                     lat: site?.lat,
                     lng: site?.lng,
                     fuelType: m.fuelType || 'Not stated',
                     eventType: m.eventType || 'Unavailability',
-                    planned: m.unavailabilityType === 'Planned',
+                    planned: !m._anyUnplanned,
                     normalMW: m.normalCapacity || 0,
                     availableMW: m.availableCapacity || 0,
                     unavailableMW: m.unavailableCapacity || 0,
