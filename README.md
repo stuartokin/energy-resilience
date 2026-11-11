@@ -8,7 +8,7 @@ By Stuart Okin, Director of Cyber Regulation and Emerging Technologies, Ofgem. A
 
 - **Map** of generation, transmission, distribution and interconnectors (OpenStreetMap data, Esri dark grey basemap)
 - **Live grid data**: frequency and demand from Elexon, generation mix and carbon intensity from NESO
-- **Live power cuts** in London, the South East and East of England (UK Power Networks open data)
+- **Live power cuts** from UK Power Networks (London, South East, East) and Northern Powergrid (North East, Yorkshire), from their open data
 - **DNO licence areas** with their real boundaries (NESO open data)
 - **Weather radar** (RainViewer)
 - **Built-in scenarios** with a day-by-day timeline of customers off supply, cost and restoration
@@ -103,6 +103,7 @@ Then open http://localhost:3000.
 | [NESO Carbon Intensity](https://carbonintensity.org.uk) | Generation mix, carbon intensity | No |
 | [OpenStreetMap](https://www.openstreetmap.org) / Overpass / Nominatim | Infrastructure, place search | No |
 | [UK Power Networks open data](https://ukpowernetworks.opendatasoft.com/explore/dataset/ukpn-live-faults/) | Live power cuts (UKPN areas) | No |
+| [Northern Powergrid open data](https://northernpowergrid.opendatasoft.com/explore/dataset/live-power-cuts-data/) | Live power cuts (NPg areas) | No |
 | [NESO DNO licence areas](https://www.neso.energy/data-portal/gis-boundaries-gb-dno-license-areas) | DNO boundaries | No |
 | [Esri World Dark Gray Canvas](https://www.arcgis.com/home/item.html?id=358ec1e175ea41c3bf5c68f0da11ae2b) | Map tiles | No |
 | [RainViewer](https://www.rainviewer.com/api.html) | Weather radar | No |
@@ -112,6 +113,6 @@ Then open http://localhost:3000.
 
 Querying OpenStreetMap for the whole of GB is slow and the free public servers are often busy. So each time the site is published (and every Monday), GitHub Actions runs `scripts/build-osm-snapshot.mjs`, which downloads power stations, high-voltage lines, interconnectors and subsea pipelines once and saves them as `data/osm-uk.json` alongside the site. The same step downloads NESO's DNO licence-area boundaries, converts them from British National Grid to latitude/longitude, simplifies them and saves `data/dno-areas.json`. Visitors load that file instantly. If the snapshot can't be built, the site still works and tries OpenStreetMap live instead.
 
-Power cuts shown are real: from UK Power Networks' live feed, plus (if you add a Gemini key) incidents found by AI web search, which are labelled "unverified". Other DNOs' live feeds are not yet included, so an empty area does not mean no power cuts.
+Power cuts shown are real: from UK Power Networks' and Northern Powergrid's live feeds, plus (if you add a Gemini key) incidents found by AI web search, which are labelled "unverified". Other DNOs' live feeds are not yet included, so an empty area does not mean no power cuts.
 
 Scenario timelines and impacts are illustrative models, not forecasts. Where a live feed is unavailable, the app falls back to estimated values and records that in the system log.

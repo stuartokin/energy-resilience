@@ -71,6 +71,8 @@ export const getApiSystemStatus = () => {
             keyStatus: !hasKey ? "Add key to enable AI" : isGenAIQuotaExceeded ? "Quota Limit" : "Your key",
             type: "AI Analysis"
         },
+        { org: "UK Power Networks", status: "Operational", keyStatus: "Open Data", type: "Live Power Cuts" },
+        { org: "Northern Powergrid", status: "Operational", keyStatus: "Open Data", type: "Live Power Cuts" },
         { org: "Elexon Insights (BMRS)", status: "Operational", keyStatus: "Open Data", type: "Frequency & Demand" },
         { org: "NESO Carbon Intensity", status: "Operational", keyStatus: "Open Data", type: "Generation Mix" },
         { org: "OpenStreetMap / Overpass", status: "Operational", keyStatus: "Open Data", type: "Infrastructure & Search" },
@@ -876,6 +878,50 @@ const fetchUkpnLiveFaults = async (): Promise<OutageEvent[]> => {
     }
 };
 
+// Live power cuts published by Northern Powergrid (North East, Yorkshire, northern Lincolnshire).
+// Free open data, no key. One row per postcode, so rows are grouped by incident reference.
+const NPG_STATUS: Record<number, OutageEvent['status']> = { 4: 'Investigating', 5: 'Restoring', 6: 'Resolved' };
+const fetchNpgLiveFaults = async (): Promise<OutageEvent[]> => {
+    try {
+        const fields = 'reference,totalconfirmedpowercut,totalpredictedpowercut,powercutcategory,natureofoutage,estimatedtimetillresolution,loggedtime,incidentstatus,lat,lng,postcode,area,reason';
+        const url = `https://northernpowergrid.opendatasoft.com/api/explore/v2.1/catalog/datasets/live-power-cuts-data/exports/json?select=${fields}&where=incidentstatus!%3D6`;
+        const resp = await fetchWithTimeout(url, 10000);
+        if (!resp.ok) throw new Error(`Northern Powergrid ${resp.status}`);
+        const rows: any[] = await resp.json();
+
+        const groups = new Map<string, any[]>();
+        rows.forEach(r => {
+            if (r.incidentstatus === 6 || typeof r.lat !== 'number' || typeof r.lng !== 'number') return;
+            const list = groups.get(r.reference) || [];
+            list.push(r);
+            groups.set(r.reference, list);
+        });
+
+        return Array.from(groups.entries()).map(([ref, list]): OutageEvent => {
+            const r = list[0];
+            const lat = list.reduce((a, x) => a + x.lat, 0) / list.length;
+            const lng = list.reduce((a, x) => a + x.lng, 0) / list.length;
+            const postcodes = Array.from(new Set(list.flatMap(x => x.postcode || []).map((p: string) => p.replace(/\s+/g, ' ').trim())));
+            const planned = r.natureofoutage === 'Planned Work on System';
+            return {
+                id: `npg_${ref}`,
+                locationName: `${r.area || 'Northern Powergrid'}${postcodes.length ? ` (${postcodes.slice(0, 3).join(', ')}${postcodes.length > 3 ? ` +${postcodes.length - 3}` : ''})` : ''}`,
+                lat, lng,
+                consumersAffected: r.totalconfirmedpowercut || r.totalpredictedpowercut || 0,
+                description: `${planned ? 'Planned work' : r.natureofoutage || 'Power cut'}${r.reason ? ` - ${String(r.reason).slice(0, 180)}` : ''}`,
+                startTime: r.loggedtime || '',
+                estRestoration: r.estimatedtimetillresolution || 'TBC',
+                source: 'Northern Powergrid (live)',
+                status: planned ? 'Active' : (NPG_STATUS[r.incidentstatus] || 'Active'),
+                isSimulated: false
+            };
+        });
+    } catch (e: any) {
+        logSystemError("Northern Powergrid live faults unavailable", e.message, "warning");
+        return [];
+    }
+};
+
 // Real outages only: UKPN's live feed for the UK, plus AI web search if the visitor has added a key.
 // (Earlier versions invented "simulated" incidents when nothing was found - removed.)
 export const fetchRealTimeOutages = async (regionName: string): Promise<OutageEvent[]> => {
@@ -887,7 +933,9 @@ export const fetchRealTimeOutages = async (regionName: string): Promise<OutageEv
     }
 
     const isUK = (REGIONS.find(r => r.name === regionName)?.id || 'UK') === 'UK';
-    const livePromise = isUK ? fetchUkpnLiveFaults() : Promise.resolve([] as OutageEvent[]);
+    const livePromise = isUK
+        ? Promise.all([fetchUkpnLiveFaults(), fetchNpgLiveFaults()]).then(r => r.flat())
+        : Promise.resolve([] as OutageEvent[]);
 
     let aiOutages: OutageEvent[] = [];
     if (!aiClient) initGenAI();
@@ -1179,7 +1227,7 @@ LIVE DATA FROM THE APP (fetched in the last few minutes - treat as current):
 - Generation mix: ${context.generationMix || 'unknown'}
 - Assets on the map: ${context.assetCount}
 - Live power cuts shown (${context.outageCount}): ${context.activeOutages || 'none'}
-- Note: live power-cut data currently covers UK Power Networks' areas only, plus any AI web-search results.
+- Note: live power-cut data currently covers UK Power Networks and Northern Powergrid areas only, plus any AI web-search results.
 
 SCENARIO BEING SIMULATED: ${scenarios.length === 0 ? 'none' : scenarios.map(sc =>
     `${sc.name} [${sc.category}] - ${sc.description} Duration ${sc.durationDays} days, peak ${sc.peakConsumersAffected?.toLocaleString?.() ?? sc.peakConsumersAffected} customers affected, areas: ${(sc.affectedDistricts || []).join(', ') || sc.region}. Note: scenario figures are illustrative assumptions, not forecasts.`).join(' | ')}
