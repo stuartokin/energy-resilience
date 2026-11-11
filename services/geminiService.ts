@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, Modality, Type, FunctionDeclaration } from "@google/genai";
-import { RiskScenario, InfrastructureAsset, TimelineStep, ChatMessage, OutageEvent, GenerationMix, SupplyChainInsight, LogEntry, DNORegion } from '../types';
+import { RiskScenario, InfrastructureAsset, TimelineStep, ChatMessage, OutageEvent, GenerationMix, SupplyChainInsight, LogEntry, DNORegion, GeneratorOutage } from '../types';
 import { ASSET_TYPES, DEEP_SEARCH_PROTOCOLS, REGIONS, UK_DNO_REGIONS } from '../constants';
 import { getAiKey, onAiKeyChange, requestAiKey } from './aiKey';
 import { OUTAGE_WORKER_URL } from '../config';
@@ -80,6 +80,7 @@ export const getApiSystemStatus = () => {
             }))
             : [{ org: "NGED, SSEN, SPEN, ENWL", status: "Not connected", keyStatus: "Needs Cloudflare Worker", type: "Live Power Cuts" }]),
         { org: "Elexon Insights (BMRS)", status: "Operational", keyStatus: "Open Data", type: "Frequency & Demand" },
+        { org: "Elexon REMIT", status: "Operational", keyStatus: "Open Data", type: "Generator Outages" },
         { org: "NESO Carbon Intensity", status: "Operational", keyStatus: "Open Data", type: "Generation Mix" },
         { org: "OpenStreetMap / Overpass", status: "Operational", keyStatus: "Open Data", type: "Infrastructure & Search" },
         { org: "Esri Dark Gray Canvas", status: "Operational", keyStatus: "Public", type: "Map Tiles" },
@@ -699,6 +700,102 @@ export const getCoordinatesForLocation = async (location: string): Promise<{lat:
 };
 
 // ... (Rest of exports below) ...
+// ---------- Elexon REMIT: live power station / interconnector outages ----------
+// REMIT notices have no coordinates, so units are placed using a lookup built at deploy time
+// (scripts/build-bmu-locations.mjs). Unmatched units are still returned, without a location.
+let bmuLookup: { sites: { name: string, lat: number, lng: number }[], units: Record<string, number> } | null = null;
+const loadBmuLookup = async () => {
+    if (bmuLookup) return bmuLookup;
+    try {
+        const resp = await fetchWithTimeout(`${import.meta.env.BASE_URL}data/bmu-locations.json`, 10000);
+        bmuLookup = resp.ok ? await resp.json() : { sites: [], units: {} };
+    } catch { bmuLookup = { sites: [], units: {} }; }
+    return bmuLookup!;
+};
+
+// Sites missing from the dictionary: GB interconnector landing points and a few newer large stations.
+// Coordinates are approximate (site level).
+const EXTRA_SITES: { match: RegExp, name: string, lat: number, lng: number }[] = [
+    { match: /FRAN1|IFA1|IFA-1/, name: 'IFA interconnector (Sellindge)', lat: 51.106, lng: 0.975 },
+    { match: /IFA2|FRAN2/, name: 'IFA2 interconnector (Chilling)', lat: 50.845, lng: -1.265 },
+    { match: /ELEC|ELCL|ELKL/, name: 'ElecLink interconnector (Folkestone)', lat: 51.094, lng: 1.144 },
+    { match: /BRTN|BRITN|NETH/, name: 'BritNed interconnector (Isle of Grain)', lat: 51.444, lng: 0.709 },
+    { match: /NEMO|BELG/, name: 'Nemo Link interconnector (Richborough)', lat: 51.305, lng: 1.348 },
+    { match: /NSL|NORW/, name: 'North Sea Link interconnector (Blyth)', lat: 55.139, lng: -1.519 },
+    { match: /VKL|VIKN|DENM/, name: 'Viking Link interconnector (Bicker Fen)', lat: 52.931, lng: -0.188 },
+    { match: /MOYL|NIRE/, name: 'Moyle interconnector (Auchencrosh)', lat: 55.072, lng: -4.975 },
+    { match: /EWIC|EIRE/, name: 'East West interconnector (Deeside)', lat: 53.226, lng: -3.072 },
+    { match: /GRNL|GREEN/, name: 'Greenlink interconnector (Pembroke)', lat: 51.683, lng: -4.992 },
+    { match: /MOWWO/, name: 'Moray West Offshore Wind Farm', lat: 58.10, lng: -3.10 },
+    { match: /SOFWO/, name: 'Sofia Offshore Wind Farm', lat: 54.97, lng: 2.10 },
+    { match: /THUPG/, name: 'Thurrock Power', lat: 51.474, lng: 0.329 },
+];
+
+// Find a unit's site: exact ID first, then the same station under another unit number (e.g. HUMR-4 -> HUMR-1).
+const locateUnit = (lookup: NonNullable<typeof bmuLookup>, ids: (string | undefined)[]) => {
+    for (const id of ids) if (id && lookup.units[id] !== undefined) return lookup.sites[lookup.units[id]];
+    const root = (id: string) => id.replace(/^[TEMC]_/, '').replace(/[-_]?\d+[A-Z]?$/, '').replace(/-[A-Z]$/, '');
+    for (const id of ids) {
+        if (!id || id === 'NO_ASSET') continue;
+        const r = root(id);
+        if (r.length < 4) continue;
+        const key = Object.keys(lookup.units).find(k => root(k) === r);
+        if (key) return lookup.sites[lookup.units[key]];
+    }
+    const joined = ids.filter(Boolean).join(' ');
+    const extra = EXTRA_SITES.find(x => x.match.test(joined));
+    return extra ? { name: extra.name, lat: extra.lat, lng: extra.lng } : undefined;
+};
+
+let remitCache: { t: number, data: GeneratorOutage[] } | null = null;
+export const fetchGeneratorOutages = async (): Promise<GeneratorOutage[]> => {
+    if (remitCache && Date.now() - remitCache.t < 300000) return remitCache.data;
+    try {
+        const now = new Date();
+        const to = new Date(now.getTime() + 60000);
+        const list = await (await fetchWithTimeout(`${ELEXON_API}/remit/list/by-event?from=${now.toISOString()}&to=${to.toISOString()}&format=json`, 10000)).json();
+        const ids: number[] = (list.data || []).map((x: any) => x.id);
+        const messages: any[] = [];
+        for (let i = 0; i < ids.length; i += 50) {
+            const q = ids.slice(i, i + 50).map(id => `messageId=${id}`).join('&');
+            const r = await fetchWithTimeout(`${ELEXON_API}/remit?${q}&format=json`, 10000);
+            if (r.ok) messages.push(...((await r.json()).data || []));
+        }
+        // Keep the latest revision of each notice, and only those still active.
+        const latest = new Map<string, any>();
+        messages.forEach(m => { const p = latest.get(m.mrid); if (!p || p.revisionNumber < m.revisionNumber) latest.set(m.mrid, m); });
+        const lookup = await loadBmuLookup();
+        const result: GeneratorOutage[] = Array.from(latest.values())
+            .filter(m => m.eventStatus === 'Active' && m.assetId !== 'NO_ASSET' && (m.unavailableCapacity || 0) > 0)
+            .map(m => {
+                const site = locateUnit(lookup, [m.affectedUnit, m.assetId, m.affectedUnitEIC]);
+                return {
+                    id: m.mrid,
+                    unit: m.affectedUnit || m.assetId || 'Unknown unit',
+                    siteName: site?.name,
+                    lat: site?.lat,
+                    lng: site?.lng,
+                    fuelType: m.fuelType || 'Not stated',
+                    eventType: m.eventType || 'Unavailability',
+                    planned: m.unavailabilityType === 'Planned',
+                    normalMW: m.normalCapacity || 0,
+                    availableMW: m.availableCapacity || 0,
+                    unavailableMW: m.unavailableCapacity || 0,
+                    cause: m.cause || 'Not stated',
+                    start: m.eventStartTime || '',
+                    end: m.eventEndTime || '',
+                    participant: m.participantId || '',
+                };
+            })
+            .sort((a, b) => b.unavailableMW - a.unavailableMW);
+        remitCache = { t: Date.now(), data: result };
+        return result;
+    } catch (e: any) {
+        logSystemError("Elexon REMIT (generator outages) unavailable", e.message, "warning");
+        return remitCache?.data || [];
+    }
+};
+
 // DNO licence areas: real boundaries from NESO (simplified at deploy time by scripts/build-dno-areas.mjs).
 const DNO_COLOURS: Record<string, string> = {
     UKPN: '#dc2626', NGED: '#eab308', SSEN: '#0ea5e9', SPEN: '#16a34a', ENWL: '#f97316', NPG: '#8b5cf6'
@@ -1250,6 +1347,7 @@ LIVE DATA FROM THE APP (fetched in the last few minutes - treat as current):
 - GB demand: ${neso?.demand ? Math.round(neso.demand) + ' MW' : 'unknown'}; frequency: ${neso?.frequency ? neso.frequency.toFixed(3) + ' Hz' : 'unknown'}; carbon intensity: ${neso?.carbonIntensity ? neso.carbonIntensity + ' gCO2/kWh' : 'unknown'}
 - Generation mix: ${context.generationMix || 'unknown'}
 - Assets on the map: ${context.assetCount}
+- Power station / interconnector outages (Elexon REMIT, live): ${context.generatorOutages || 'none loaded'}
 - Live power cuts shown (${context.outageCount}): ${context.activeOutages || 'none'}
 - Live power-cut sources connected: UK Power Networks, Northern Powergrid${OUTAGE_WORKER_URL ? ', plus ' + (workerSourceStatus.filter(x => x.ok).map(x => x.name).join(', ') || 'none of NGED/SSEN/SPEN/ENWL yet') : ''}. Areas without a connected feed may still have power cuts.
 

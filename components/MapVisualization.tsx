@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { InfrastructureAsset, RegionConfig, RiskScenario, OutageEvent, DNORegion, AssetType } from '../types';
+import { InfrastructureAsset, RegionConfig, RiskScenario, OutageEvent, DNORegion, AssetType, GeneratorOutage } from '../types';
 import { ASSET_TYPES } from '../constants';
 import { PlusIcon, MinusIcon, ExclamationTriangleIcon } from '@heroicons/react/24/solid';
 
@@ -20,6 +20,7 @@ interface MapProps {
     peakImpact?: number;
     viewOverride?: { lat: number, lng: number, zoom: number } | null;
     isScenarioComplete?: boolean;
+    generatorOutages?: GeneratorOutage[];
 }
 
 const getVoltageColor = (tags: any) => {
@@ -89,7 +90,7 @@ const OUTAGE_ICON = L.divIcon({
 
 const MapVisualization: React.FC<MapProps> = ({ 
     region, assets, outages, historicalOutages = [], activeScenarios, dnoRegions = [], day, filters, 
-    onAssetSelect, onViewChange, currentImpact = 0, peakImpact = 1, viewOverride, isScenarioComplete
+    onAssetSelect, onViewChange, currentImpact = 0, peakImpact = 1, viewOverride, isScenarioComplete, generatorOutages = []
 }) => {
     const mapContainerRef = useRef<HTMLDivElement>(null);
     const [noLocationWarning, setNoLocationWarning] = useState(false);
@@ -101,6 +102,7 @@ const MapVisualization: React.FC<MapProps> = ({
     const assetMarkersRef = useRef<Map<string, L.Marker>>(new Map());
     const assetLinesRef = useRef<Map<string, L.Polyline>>(new Map());
     const outageLayerRef = useRef<L.LayerGroup | null>(null);
+    const genOutageLayerRef = useRef<L.LayerGroup | null>(null);
     const dnoLayerRef = useRef<L.LayerGroup | null>(null);
     const weatherLayerRef = useRef<L.TileLayer | null>(null);
     const impactCirclesRef = useRef<L.Circle[]>([]);
@@ -155,6 +157,7 @@ const MapVisualization: React.FC<MapProps> = ({
         if (labelsPane) { labelsPane.style.zIndex = '450'; labelsPane.style.pointerEvents = 'none'; }
         L.tileLayer(LABELS_URL, { pane: 'labels', maxNativeZoom: 16, maxZoom: 19, opacity: 0.7 }).addTo(map);
         outageLayerRef.current = L.layerGroup().addTo(map);
+        genOutageLayerRef.current = L.layerGroup().addTo(map);
         dnoLayerRef.current = L.layerGroup().addTo(map);
 
         map.on('moveend', () => {
@@ -425,6 +428,46 @@ const MapVisualization: React.FC<MapProps> = ({
             marker.addTo(layer);
         });
     }, [outages, historicalOutages, isMapReady]);
+
+    // --- GENERATOR OUTAGES (Elexon REMIT) ---
+    useEffect(() => {
+        const layer = genOutageLayerRef.current;
+        if (!layer || !isMapReady) return;
+        layer.clearLayers();
+        if (!filters.has('Generator Outages')) return;
+
+        // Several units at one station: group into one marker per site.
+        const bySite = new Map<string, GeneratorOutage[]>();
+        generatorOutages.forEach(g => {
+            if (typeof g.lat !== 'number' || typeof g.lng !== 'number') return;
+            const k = `${g.lat},${g.lng}`;
+            bySite.set(k, [...(bySite.get(k) || []), g]);
+        });
+        bySite.forEach(list => {
+            const unplanned = list.some(g => !g.planned);
+            const mw = list.reduce((a, g) => a + g.unavailableMW, 0);
+            const size = Math.max(14, Math.min(34, 10 + Math.sqrt(mw) * 0.9));
+            const colour = unplanned ? '#f59e0b' : '#64748b';
+            const icon = L.divIcon({
+                html: `<div style="width:${size}px;height:${size}px;transform:rotate(45deg);background:${colour};border:2px solid #fff;opacity:0.9;box-shadow:0 0 8px ${colour}"></div>`,
+                className: 'asset-icon',
+                iconSize: [size, size],
+                iconAnchor: [size / 2, size / 2]
+            });
+            const rows = list.map(g => `
+                <div style="border-top:1px solid #334155;padding-top:4px;margin-top:4px">
+                    <b>${esc(g.unit)}</b> <span style="color:${g.planned ? '#94a3b8' : '#fbbf24'}">${g.planned ? 'Planned' : 'Unplanned'}</span><br>
+                    ${esc(g.fuelType)} &middot; ${Math.round(g.unavailableMW)} MW out of ${Math.round(g.normalMW)} MW unavailable<br>
+                    <span style="color:#94a3b8">Cause: ${esc(g.cause)} &middot; until ${esc(g.end ? new Date(g.end).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' }) : 'TBC')}</span>
+                </div>`).join('');
+            L.marker([list[0].lat!, list[0].lng!], { icon, zIndexOffset: 1500, title: `${list[0].siteName}: ${Math.round(mw)} MW unavailable` })
+                .bindPopup(`<div style="min-width:240px;max-height:260px;overflow:auto;padding:10px 12px;font-size:11px">
+                    <div style="font-weight:bold;font-size:13px">${esc(list[0].siteName || list[0].unit)}</div>
+                    <div style="color:#fbbf24;font-weight:bold">${Math.round(mw)} MW unavailable</div>${rows}
+                    <div style="font-size:9px;color:#64748b;margin-top:6px">Source: Elexon REMIT (live). Location approximate.</div></div>`)
+                .addTo(layer);
+        });
+    }, [generatorOutages, filters, isMapReady]);
 
     const handleZoomIn = () => { mapRef.current?.zoomIn(); };
     const handleZoomOut = () => { mapRef.current?.zoomOut(); };

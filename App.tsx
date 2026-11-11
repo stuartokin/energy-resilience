@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { 
-    RegionConfig, InfrastructureAsset, RiskScenario, TimelineStep, AssetType, SaveData, OutageEvent, GenerationMix, SupplyChainInsight, DNORegion 
+    RegionConfig, InfrastructureAsset, RiskScenario, TimelineStep, AssetType, SaveData, OutageEvent, GenerationMix, SupplyChainInsight, DNORegion, GeneratorOutage 
 } from './types';
 import { 
     REGIONS, UK_ASSETS_SEED, ASSET_TYPES, INITIAL_SCENARIOS, UK_DNO_REGIONS,
@@ -11,7 +11,7 @@ import {
     fetchEnergyInfrastructure, generateRiskScenarios, calculateScenarioImpact,
     generateVideoReportScript, generateNarratedAudio, generateSlideshowImages, fetchRealTimeOutages,
     TOUR_SCRIPTS, getApiSystemStatus, fetchNESOPowerData, fetchHistoricalOutages, fetchGenerationMix,
-    generateSupplyChainAnalysis, searchInfrastructureAssets, loadDnoBoundaries
+    generateSupplyChainAnalysis, searchInfrastructureAssets, loadDnoBoundaries, fetchGeneratorOutages
 } from './services/geminiService';
 import MapVisualization from './components/MapVisualization';
 import ChatPanel from './components/ChatPanel';
@@ -146,6 +146,14 @@ export const App: React.FC = () => {
     const [assets, setAssets] = useState<InfrastructureAsset[]>(UK_ASSETS_SEED);
     const [scenarios, setScenarios] = useState<RiskScenario[]>(INITIAL_SCENARIOS);
     const [liveOutages, setLiveOutages] = useState<OutageEvent[]>([]);
+    // Power station / interconnector outages from Elexon REMIT, refreshed every 5 minutes
+    const [generatorOutages, setGeneratorOutages] = useState<GeneratorOutage[]>([]);
+    useEffect(() => {
+        const load = () => fetchGeneratorOutages().then(setGeneratorOutages).catch(() => {});
+        load();
+        const id = setInterval(load, 300000);
+        return () => clearInterval(id);
+    }, []);
     const [historicalOutages, setHistoricalOutages] = useState<OutageEvent[]>([]);
     const [showHistorical, setShowHistorical] = useState(false);
     const [nesoData, setNesoData] = useState({ demand: 0, frequency: 50.0, carbonIntensity: 0 });
@@ -176,7 +184,7 @@ export const App: React.FC = () => {
     
     // UI Interactions
     const [selectedAsset, setSelectedAsset] = useState<InfrastructureAsset | null>(null);
-    const [visibleLayers, setVisibleLayers] = useState<Set<string>>(new Set(['Generation', 'Transmission', 'Interconnector', 'Distribution', 'Retail', 'DNO Regions']));
+    const [visibleLayers, setVisibleLayers] = useState<Set<string>>(new Set(['Generation', 'Transmission', 'Interconnector', 'Distribution', 'Retail', 'DNO Regions', 'Generator Outages']));
     const [selectedPointInfo, setSelectedPointInfo] = useState<TimelineStep | null>(null);
     const [mapCenterOverride, setMapCenterOverride] = useState<{lat: number, lng: number, zoom: number} | null>(null);
     const [customAssetQuery, setCustomAssetQuery] = useState("");
@@ -741,7 +749,7 @@ export const App: React.FC = () => {
         setIsPlaying(false);
         setTimeline([]);
         setChartMode('normal');
-        setVisibleLayers(new Set(['Generation', 'Transmission', 'Interconnector', 'Distribution', 'Retail', 'DNO Regions']));
+        setVisibleLayers(new Set(['Generation', 'Transmission', 'Interconnector', 'Distribution', 'Retail', 'DNO Regions', 'Generator Outages']));
         setActiveRegion(prev => ({...prev}));
         setMapCenterOverride({ lat: activeRegion.lat, lng: activeRegion.lng, zoom: activeRegion.zoom });
         setMinimizedPanels(new Set(INITIAL_MINIMIZED));
@@ -1345,6 +1353,7 @@ export const App: React.FC = () => {
                             peakImpact={Math.max(...timeline.map(t => t.consumersOffline)) || 1}
                             viewOverride={mapCenterOverride}
                             isScenarioComplete={isScenarioComplete}
+                            generatorOutages={generatorOutages}
                         />
                     </div>
                     
@@ -1438,6 +1447,16 @@ export const App: React.FC = () => {
                                             DNO Zones
                                         </button>
                                         
+                                        {/* Generator outages (Elexon REMIT) */}
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); toggleLayer('Generator Outages'); }}
+                                            className={`w-full flex items-center gap-2 px-2 py-1 rounded text-[10px] font-bold transition-all ${visibleLayers.has('Generator Outages') ? 'bg-slate-800 text-white' : 'text-slate-500 opacity-50'}`}
+                                            title="Live power station and interconnector outages (Elexon REMIT). Amber = unplanned."
+                                        >
+                                            <div className="w-2 h-2 rotate-45 bg-amber-500"></div>
+                                            Generator Outages
+                                        </button>
+
                                         {/* Weather Radar Toggle */}
                                         <button 
                                             onClick={(e) => { e.stopPropagation(); toggleLayer('Weather Radar'); }}
@@ -1927,6 +1946,7 @@ export const App: React.FC = () => {
                                     outages={[...liveOutages, ...(showHistorical ? historicalOutages : [])]}
                                     onMapAction={handleMapAction}
                                     generationMix={generationMix}
+                                    generatorOutagesSummary={generatorOutages.length ? `${generatorOutages.length} active notices, ${Math.round(generatorOutages.reduce((a, g) => a + g.unavailableMW, 0))} MW unavailable in total (${Math.round(generatorOutages.filter(g => !g.planned).reduce((a, g) => a + g.unavailableMW, 0))} MW unplanned). Largest: ${generatorOutages.slice(0, 8).map(g => `${g.siteName || g.unit} ${g.unit} ${g.fuelType} ${Math.round(g.unavailableMW)}MW ${g.planned ? 'planned' : 'UNPLANNED'} (${g.cause})`).join('; ')}` : ''}
                                     timelineNow={activeScenarios.length > 0 && timeline[currentDay] ? `day ${currentDay}: ${timeline[currentDay].consumersOffline.toLocaleString()} customers off supply, ${timeline[currentDay].restorationPct}% restored, est. cost £${timeline[currentDay].costMillions}m` : ''}
                                 />
                             </div>

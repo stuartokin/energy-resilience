@@ -14,9 +14,10 @@ interface ChatPanelProps {
     onMapAction: (lat: number, lng: number, zoom: number) => void;
     generationMix?: GenerationMix | null;
     timelineNow?: string;
+    generatorOutagesSummary?: string;
 }
 
-const ChatPanel: React.FC<ChatPanelProps> = ({ isOpen, activeScenarios, assetCount, regionName, nesoData, outages, onMapAction, generationMix, timelineNow }) => {
+const ChatPanel: React.FC<ChatPanelProps> = ({ isOpen, activeScenarios, assetCount, regionName, nesoData, outages, onMapAction, generationMix, timelineNow, generatorOutagesSummary }) => {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
     
@@ -61,6 +62,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ isOpen, activeScenarios, assetCou
             nesoData: nesoData,
             generationMix: generationMix ? generationMix.generation.map(g => `${g.fuel} ${g.perc}%`).join(', ') : '',
             timelineNow: timelineNow || '',
+            generatorOutages: generatorOutagesSummary || '',
             outageCount: outages.length,
             activeOutages: outages.slice(0, 25).map(o => `${o.locationName} (${o.source}): ${String(o.description).slice(0, 80)}, ${o.consumersAffected || 'unknown'} customers, status ${o.status}`).join("; ")
         };

@@ -56,6 +56,25 @@ export interface OutageEvent {
     isSimulated?: boolean;
 }
 
+// Elexon REMIT notice: a power station, interconnector or storage unit that is (partly) unavailable.
+export interface GeneratorOutage {
+    id: string;             // REMIT mRID
+    unit: string;           // BM unit, e.g. KLYN-A-1
+    siteName?: string;      // e.g. Kings Lynn (from the BM unit lookup)
+    lat?: number;
+    lng?: number;
+    fuelType: string;
+    eventType: string;      // Production / Consumption / Transmission unavailability
+    planned: boolean;
+    normalMW: number;
+    availableMW: number;
+    unavailableMW: number;
+    cause: string;
+    start: string;
+    end: string;
+    participant: string;
+}
+
 export interface GenerationMixItem {
     fuel: string;
     perc: number;
