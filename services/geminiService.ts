@@ -188,7 +188,11 @@ export const osmElementsToAssets = (elements: any[]): InfrastructureAsset[] => {
                  else if (volt > 0) typeId = 'distribution_elec';
                  else typeId = 'distribution_elec'; // Default low voltage lines to distribution
                  
-                 if (isCable && tags.location === 'underwater') typeId = 'interconnector';
+                 // Subsea cables: only true interconnectors count as 'interconnector'.
+                 // Wind farm array/export cables are classed by voltage instead.
+                 const nm = String(tags.name || '');
+                 const isWindCable = /inter.?array|array string|export|wind|offshore substation|OFTO/i.test(nm) || /wind/i.test(String(tags.operator || ''));
+                 if (isCable && tags.location === 'underwater' && !isWindCable) typeId = 'interconnector';
             }
 
             let lat, lng;
@@ -1147,74 +1151,81 @@ export const generateSupplyChainAnalysis = async (region: string): Promise<Suppl
 };
 
 // 5. Chat Analyst with Map Control Tools
+// Turn a Gemini error into something a visitor can act on.
+const describeAiError = (e: any): string => {
+    const msg = String(e?.message || e || '');
+    if (/API key not valid|API_KEY_INVALID|permission|PERMISSION_DENIED|401|403/i.test(msg)) return 'Your Gemini key was rejected. Check it in "AI: On" (top bar) - it may have been deleted or mistyped.';
+    if (/429|quota|RESOURCE_EXHAUSTED|rate/i.test(msg)) return "Your Gemini key has hit Google's free-tier limit. Wait a minute (or until tomorrow for the daily limit) and try again.";
+    if (/not found|404|is not supported|deprecated/i.test(msg)) return 'The Gemini model used by this app is unavailable for your key. Please let the site owner know.';
+    if (/Failed to fetch|NetworkError|network/i.test(msg)) return 'Could not reach Google. Check your internet connection and try again.';
+    return `The AI request failed: ${msg.slice(0, 160)}`;
+};
+
+// Analyst chat. Gemini answers using (a) the live data currently shown in the app, passed in
+// below, and (b) Google Search for anything else. It can also move the map.
+// Note: Gemini 2.5 cannot combine Google Search with function calling in one request,
+// so map moves are returned as a simple text tag instead of a function call.
 export const chatWithAnalyst = async (history: ChatMessage[], context: any, newMessage: string) => {
     if (!aiClient) initGenAI();
     if (!aiClient) { requestAiKey(); return { text: "The AI analyst needs a Gemini key. Click \"AI: Off\" in the top bar to add your free key.", toolCall: null }; }
-    
-    const systemInstruction = `You are a Senior Energy Resilience Consultant.
-    Context Region: ${context.region}
-    Active Scenario: ${context.scenario?.name || "None"}
-    Assets Count: ${context.assetCount}
-    
-    IMPORTANT TOOL USE:
-    If the user asks to see, locate, pan to, or zoom into a specific place or asset, you MUST use the 'moveMap' tool. 
-    Do not just say you are moving the map, you must actually call the function.
-    
-    Discuss grid stability, vulnerabilities (cyber/physical), and mitigation strategies.
-    USE GOOGLE SEARCH for real-time info. CITE SOURCES.
-    `;
 
-    const moveMapTool: FunctionDeclaration = {
-        name: "moveMap",
-        description: "Moves the map view to a specific latitude, longitude and zoom level. Use this when the user asks to see a location.",
-        parameters: {
-            type: Type.OBJECT,
-            properties: {
-                lat: { type: Type.NUMBER, description: "Latitude of the location" },
-                lng: { type: Type.NUMBER, description: "Longitude of the location" },
-                zoom: { type: Type.NUMBER, description: "Zoom level (1-18). Use 12 for cities, 15 for specific assets, 9 for regions." }
-            },
-            required: ["lat", "lng", "zoom"]
-        }
-    };
+    const neso = context.nesoData;
+    const scenarios = (context.scenarios || []) as RiskScenario[];
+    const systemInstruction = `You are an energy-sector resilience analyst helping a user of a GB energy risk map.
+
+LIVE DATA FROM THE APP (fetched in the last few minutes - treat as current):
+- Region: ${context.region}
+- GB demand: ${neso?.demand ? Math.round(neso.demand) + ' MW' : 'unknown'}; frequency: ${neso?.frequency ? neso.frequency.toFixed(3) + ' Hz' : 'unknown'}; carbon intensity: ${neso?.carbonIntensity ? neso.carbonIntensity + ' gCO2/kWh' : 'unknown'}
+- Generation mix: ${context.generationMix || 'unknown'}
+- Assets on the map: ${context.assetCount}
+- Live power cuts shown (${context.outageCount}): ${context.activeOutages || 'none'}
+- Note: live power-cut data currently covers UK Power Networks' areas only, plus any AI web-search results.
+
+SCENARIO BEING SIMULATED: ${scenarios.length === 0 ? 'none' : scenarios.map(sc =>
+    `${sc.name} [${sc.category}] - ${sc.description} Duration ${sc.durationDays} days, peak ${sc.peakConsumersAffected?.toLocaleString?.() ?? sc.peakConsumersAffected} customers affected, areas: ${(sc.affectedDistricts || []).join(', ') || sc.region}. Note: scenario figures are illustrative assumptions, not forecasts.`).join(' | ')}
+${context.timelineNow ? `Simulation now at: ${context.timelineNow}` : ''}
+
+RULES:
+- Ground answers in the live data above where relevant, and say when you're using it.
+- Use Google Search for facts not in the data above, and say what you found.
+- Be clear about uncertainty. Never invent figures, incidents, suppliers or vulnerabilities. If you don't know, say so.
+- Keep answers concise and practical (resilience, cyber and physical risk, mitigations, regulation).
+- If the user asks to see, find, zoom to or show a place or asset, end your reply with one line exactly like:
+  MAP: <latitude>, <longitude>, <zoom 5-16>`;
 
     try {
-         const chat = aiClient.chats.create({
+        const chat = aiClient.chats.create({
             model: 'gemini-2.5-flash',
-            config: { 
-                systemInstruction,
-                tools: [{ googleSearch: {} }, { functionDeclarations: [moveMapTool] }] 
-            },
-            history: history.map(h => ({ role: h.role, parts: [{ text: h.text }] }))
+            config: { systemInstruction, tools: [{ googleSearch: {} }] },
+            history: history
+                .filter(h => h.text && !h.text.startsWith('Hello!'))
+                .map(h => ({ role: h.role, parts: [{ text: h.text }] }))
         });
-        
+
         const result = await chat.sendMessage({ message: newMessage });
         let text = result.text || "";
-        
-        // Handle Tool Calls
-        let toolCall = null;
-        const functionCalls = result.functionCalls;
-        if (functionCalls && functionCalls.length > 0) {
-            const fc = functionCalls[0];
-            if (fc.name === 'moveMap') {
-                toolCall = fc;
-                text += `\n[Navigating map to target location...]`;
-            }
+
+        // Map move tag
+        let toolCall: any = null;
+        const m = text.match(/^\s*MAP:\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*$/mi);
+        if (m) {
+            toolCall = { name: 'moveMap', args: { lat: parseFloat(m[1]), lng: parseFloat(m[2]), zoom: Math.round(parseFloat(m[3])) } };
+            text = text.replace(m[0], '').trim() + '\n[Moving the map...]';
         }
 
         const groundingChunks = result.candidates?.[0]?.groundingMetadata?.groundingChunks;
         if (groundingChunks && groundingChunks.length > 0) {
             const sources = groundingChunks
                 .map((c: any) => c.web?.uri ? `${c.web.title || 'Source'}: ${c.web.uri}` : null)
-                .filter((s: string | null) => s)
+                .filter((x: string | null) => x)
                 .slice(0, 3);
-            if (sources.length > 0) text += "\n\n**Sources:**\n" + sources.join("\n");
+            if (sources.length > 0) text += "\n\nSources (Google Search):\n" + sources.join("\n");
         }
 
-        return { text: cleanText(text), toolCall };
-    } catch (e) { 
+        return { text: cleanText(text) || "No answer returned - please try rephrasing.", toolCall };
+    } catch (e: any) {
         handleApiError(e);
-        return { text: "Service unavailable (Quota Limit or Network Issue).", toolCall: null }; 
+        return { text: describeAiError(e), toolCall: null };
     }
 };
 

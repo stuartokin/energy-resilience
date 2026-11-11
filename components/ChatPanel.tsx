@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { PaperAirplaneIcon, SparklesIcon, UserIcon, CpuChipIcon, ClipboardDocumentIcon, CheckIcon } from '@heroicons/react/24/solid';
-import { ChatMessage, RiskScenario, OutageEvent } from '../types';
+import { ChatMessage, RiskScenario, OutageEvent, GenerationMix } from '../types';
 import { chatWithAnalyst } from '../services/geminiService';
 
 interface ChatPanelProps {
@@ -12,9 +12,11 @@ interface ChatPanelProps {
     nesoData: { demand: number, frequency: number, carbonIntensity: number };
     outages: OutageEvent[];
     onMapAction: (lat: number, lng: number, zoom: number) => void;
+    generationMix?: GenerationMix | null;
+    timelineNow?: string;
 }
 
-const ChatPanel: React.FC<ChatPanelProps> = ({ isOpen, activeScenarios, assetCount, regionName, nesoData, outages, onMapAction }) => {
+const ChatPanel: React.FC<ChatPanelProps> = ({ isOpen, activeScenarios, assetCount, regionName, nesoData, outages, onMapAction, generationMix, timelineNow }) => {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
     
@@ -54,11 +56,13 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ isOpen, activeScenarios, assetCou
 
         const context = {
             region: regionName,
-            scenario: activeScenarios.length > 0 ? { name: activeScenarios.map(s => s.name).join(", ") } : null,
+            scenarios: activeScenarios,
             assetCount: assetCount,
             nesoData: nesoData,
+            generationMix: generationMix ? generationMix.generation.map(g => `${g.fuel} ${g.perc}%`).join(', ') : '',
+            timelineNow: timelineNow || '',
             outageCount: outages.length,
-            activeOutages: outages.map(o => `${o.locationName}: ${o.description} (${o.consumersAffected} affected)`).join("; ")
+            activeOutages: outages.slice(0, 25).map(o => `${o.locationName} (${o.source}): ${String(o.description).slice(0, 80)}, ${o.consumersAffected || 'unknown'} customers, status ${o.status}`).join("; ")
         };
 
         const response = await chatWithAnalyst(messages, context, userMsg.text);

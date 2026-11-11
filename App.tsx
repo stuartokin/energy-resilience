@@ -323,7 +323,7 @@ export const App: React.FC = () => {
         const timeSinceInteraction = Date.now() - lastInteractionTime.current;
         const skipHeavyTasks = timeSinceInteraction < 3000;
 
-        setBackgroundTask("AUTO-UPDATE: Syncing Grid Data...");
+        // Routine refresh runs silently (no banner).
         
         try {
             const neso = await fetchNESOPowerData();
@@ -1134,10 +1134,10 @@ export const App: React.FC = () => {
                     <div className="flex items-center gap-3">
                         <ExclamationTriangleIcon className="w-6 h-6 text-amber-500 shrink-0" />
                         <div>
-                            <h3 className="font-bold text-sm">System Initialization Notice</h3>
+                            <h3 className="font-bold text-sm">Getting started</h3>
                             <p className="text-xs text-amber-200/80 mt-1">
-                                Complete asset data may not be immediately visible. 
-                                Perform a <span className="font-bold text-white">Force Deep Update</span> or zoom into specific regions to sync granular infrastructure data.
+                                National infrastructure and live grid data load automatically. 
+                                Zoom into an area to load local substations and lines, and use the <span className="font-bold text-white">filter</span> button to choose layers.
                             </p>
                         </div>
                     </div>
@@ -1926,6 +1926,8 @@ export const App: React.FC = () => {
                                     nesoData={nesoData}
                                     outages={[...liveOutages, ...(showHistorical ? historicalOutages : [])]}
                                     onMapAction={handleMapAction}
+                                    generationMix={generationMix}
+                                    timelineNow={activeScenarios.length > 0 && timeline[currentDay] ? `day ${currentDay}: ${timeline[currentDay].consumersOffline.toLocaleString()} customers off supply, ${timeline[currentDay].restorationPct}% restored, est. cost £${timeline[currentDay].costMillions}m` : ''}
                                 />
                             </div>
                         </DraggablePanel>
