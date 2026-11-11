@@ -1,0 +1,7 @@
+{
+  "name": "Energy Sector Resilience & Risk",
+  "description": "Visualize energy infrastructure, simulate risk scenarios (storms, cyber, failure), and analyze consumer impact.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
