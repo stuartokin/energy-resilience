@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { 
-    RegionConfig, InfrastructureAsset, RiskScenario, TimelineStep, AssetType, SaveData, OutageEvent, GenerationMix, SupplyChainInsight 
+    RegionConfig, InfrastructureAsset, RiskScenario, TimelineStep, AssetType, SaveData, OutageEvent, GenerationMix, SupplyChainInsight, DNORegion 
 } from './types';
 import { 
     REGIONS, UK_ASSETS_SEED, ASSET_TYPES, INITIAL_SCENARIOS, UK_DNO_REGIONS,
@@ -11,7 +11,7 @@ import {
     fetchEnergyInfrastructure, generateRiskScenarios, calculateScenarioImpact,
     generateVideoReportScript, generateNarratedAudio, generateSlideshowImages, fetchRealTimeOutages,
     TOUR_SCRIPTS, getApiSystemStatus, fetchNESOPowerData, fetchHistoricalOutages, fetchGenerationMix,
-    generateSupplyChainAnalysis, searchInfrastructureAssets
+    generateSupplyChainAnalysis, searchInfrastructureAssets, loadDnoBoundaries
 } from './services/geminiService';
 import MapVisualization from './components/MapVisualization';
 import ChatPanel from './components/ChatPanel';
@@ -563,13 +563,18 @@ export const App: React.FC = () => {
         }
         setBackgroundTask(null);
 
-        // 4. AI extras only if the visitor has added a Gemini key.
-        if (!hasAiKey() || lastLoadedRegionIdRef.current !== regionId) return;
+        // 4. Live power cuts (UKPN open data; plus AI web search if a key is set).
+        if (lastLoadedRegionIdRef.current !== regionId) return;
         try {
-            setBackgroundTask("AI: checking live outages and generating scenarios...");
             const outages = await fetchRealTimeOutages(activeRegion.name);
             setLiveOutages(outages);
             setLastOutageCheck(new Date());
+        } catch (e) { console.warn("Outage load failed", e); }
+
+        // 5. AI-generated scenarios only if the visitor has added a Gemini key.
+        if (!hasAiKey() || lastLoadedRegionIdRef.current !== regionId) return;
+        try {
+            setBackgroundTask("AI: generating risk scenarios...");
             const newScenarios = await generateRiskScenarios(activeRegion.name, assetsRef.current);
             setScenarios(prev => {
                 const unique = new Map();
@@ -947,7 +952,12 @@ export const App: React.FC = () => {
         setMapCenterOverride({ lat, lng, zoom });
     }, []);
 
-    const memoizedDnoRegions = useMemo(() => activeRegion.id === 'UK' ? UK_DNO_REGIONS : [], [activeRegion.id]);
+    // Real DNO licence-area boundaries (NESO open data, built at deploy time); rough outlines as fallback.
+    const [ukDnoRegions, setUkDnoRegions] = useState<DNORegion[]>(UK_DNO_REGIONS);
+    useEffect(() => {
+        loadDnoBoundaries().then(regions => { if (regions.length) setUkDnoRegions(regions); });
+    }, []);
+    const memoizedDnoRegions = useMemo(() => activeRegion.id === 'UK' ? ukDnoRegions : [], [activeRegion.id, ukDnoRegions]);
 
     const cleanedScriptForPrint = useMemo(() => {
         return generatedScript

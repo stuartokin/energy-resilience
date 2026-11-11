@@ -1,7 +1,7 @@
 
 import { GoogleGenAI, Modality, Type, FunctionDeclaration } from "@google/genai";
-import { RiskScenario, InfrastructureAsset, TimelineStep, ChatMessage, OutageEvent, GenerationMix, SupplyChainInsight, LogEntry } from '../types';
-import { ASSET_TYPES, DEEP_SEARCH_PROTOCOLS, REGIONS } from '../constants';
+import { RiskScenario, InfrastructureAsset, TimelineStep, ChatMessage, OutageEvent, GenerationMix, SupplyChainInsight, LogEntry, DNORegion } from '../types';
+import { ASSET_TYPES, DEEP_SEARCH_PROTOCOLS, REGIONS, UK_DNO_REGIONS } from '../constants';
 import { getAiKey, onAiKeyChange, requestAiKey } from './aiKey';
 
 let aiClient: GoogleGenAI | null = null;
@@ -687,6 +687,37 @@ export const getCoordinatesForLocation = async (location: string): Promise<{lat:
 };
 
 // ... (Rest of exports below) ...
+// DNO licence areas: real boundaries from NESO (simplified at deploy time by scripts/build-dno-areas.mjs).
+const DNO_COLOURS: Record<string, string> = {
+    UKPN: '#dc2626', NGED: '#eab308', SSEN: '#0ea5e9', SPEN: '#16a34a', ENWL: '#f97316', NPG: '#8b5cf6'
+};
+
+export const loadDnoBoundaries = async (): Promise<DNORegion[]> => {
+    try {
+        const resp = await fetchWithTimeout(`${import.meta.env.BASE_URL}data/dno-areas.json`, 10000);
+        if (!resp.ok) return [];
+        const json = await resp.json();
+        const areas = json.areas || [];
+        if (areas.length === 0) return [];
+        const gb: DNORegion[] = areas.map((a: any) => ({
+            id: `dno_${String(a.area).toLowerCase().replace(/[^a-z]+/g, '_')}`,
+            name: a.area,
+            operator: a.dnoFull,
+            color: DNO_COLOURS[a.dno] || '#64748b',
+            households: 0,
+            industryCount: 0,
+            path: [],
+            polygons: a.polygons
+        }));
+        // NESO's file covers Great Britain only; keep the Northern Ireland outline.
+        const ni = UK_DNO_REGIONS.filter(r => r.id === 'nie_networks');
+        return [...gb, ...ni];
+    } catch (e: any) {
+        logSystemError("DNO boundaries unavailable", e.message, "warning");
+        return [];
+    }
+};
+
 let ukSnapshotCache: InfrastructureAsset[] | null = null;
 export let ukSnapshotDate: string | null = null;
 
@@ -808,18 +839,53 @@ export const generateCustomScenario = async (userQuery: string, region: string):
     }
 };
 
+// Live power cuts published by UK Power Networks (London, South East, East of England).
+// Free open data, no key. Only includes incidents not yet restored.
+const fetchUkpnLiveFaults = async (): Promise<OutageEvent[]> => {
+    try {
+        const url = 'https://ukpowernetworks.opendatasoft.com/api/explore/v2.1/catalog/datasets/ukpn-live-faults/records?limit=100';
+        const resp = await fetchWithTimeout(url, 8000);
+        if (!resp.ok) throw new Error(`UKPN ${resp.status}`);
+        const json = await resp.json();
+        return (json.results || [])
+            .filter((r: any) => !r.restoreddatetime && r.geopoint && r.powercuttype !== 'Restored')
+            .map((r: any): OutageEvent => {
+                const planned = r.powercuttype === 'Planned';
+                const customers = r.nocustomeraffected || r.noplannedcustomers || 0;
+                return {
+                    id: `ukpn_${r.incidentreference}`,
+                    locationName: `${(r.operatingzone || 'UKPN area').replace(/\b\w+/g, (w: string) => w[0] + w.slice(1).toLowerCase())}${r.postcodesaffected ? ` (${String(r.postcodesaffected).split(';').slice(0, 3).join(', ')})` : ''}`,
+                    lat: r.geopoint.lat,
+                    lng: r.geopoint.lon,
+                    consumersAffected: customers,
+                    description: planned ? 'Planned work' : (r.incidentcategorycustomerfriendlydescription || r.mainmessage || 'Unplanned power cut').slice(0, 220),
+                    startTime: r.receiveddate || r.creationdatetime || '',
+                    estRestoration: r.estimatedrestorationdate || 'TBC',
+                    source: 'UK Power Networks (live)',
+                    status: planned ? 'Active' : (r.statusid === 1 ? 'Investigating' : 'Restoring'),
+                    isSimulated: false
+                };
+            });
+    } catch (e: any) {
+        logSystemError("UKPN live faults unavailable", e.message, "warning");
+        return [];
+    }
+};
+
+// Real outages only: UKPN's live feed for the UK, plus AI web search if the visitor has added a key.
+// (Earlier versions invented "simulated" incidents when nothing was found - removed.)
 export const fetchRealTimeOutages = async (regionName: string): Promise<OutageEvent[]> => {
-    // Check Cache (5 minutes TTL)
     const key = regionName;
     const now = Date.now();
     if (outageCache.has(key)) {
         const cached = outageCache.get(key)!;
-        if (now - cached.timestamp < 300000) {
-            console.log("Using cached outages");
-            return cached.data;
-        }
+        if (now - cached.timestamp < 300000) return cached.data;
     }
 
+    const isUK = (REGIONS.find(r => r.name === regionName)?.id || 'UK') === 'UK';
+    const livePromise = isUK ? fetchUkpnLiveFaults() : Promise.resolve([] as OutageEvent[]);
+
+    let aiOutages: OutageEvent[] = [];
     if (!aiClient) initGenAI();
     
     if (aiClient) {
@@ -845,21 +911,19 @@ export const fetchRealTimeOutages = async (regionName: string): Promise<OutageEv
                          locationName: r.locationName || "Unknown Location",
                          lat: r.lat,
                          lng: r.lng,
-                         consumersAffected: r.consumersAffected || Math.floor(Math.random() * 500) + 50,
+                         consumersAffected: Number(r.consumersAffected) || 0,
                          description: r.description || "Unplanned Circuit Fault",
                          startTime: r.startTime || new Date().toISOString(),
                          estRestoration: r.estRestoration || "TBC",
-                         source: r.source || "Network Data",
+                         source: `AI web search (unverified)${r.source ? ` - ${r.source}` : ""}`,
                          status: r.status || "Active",
                          isSimulated: false // AI Retrieved Real Data (Likely)
                      }));
                      // Update Cache
-                     outageCache.set(key, { timestamp: now, data: result });
-                     return result;
+                     aiOutages = result.filter((o: OutageEvent) => typeof o.lat === 'number' && typeof o.lng === 'number');
                  } else if (Array.isArray(raw) && raw.length === 0) {
                      // Valid empty result, no fallback needed
-                     outageCache.set(key, { timestamp: now, data: [] });
-                     return [];
+                     aiOutages = [];
                  }
             }
         } catch (e: any) { 
@@ -873,34 +937,11 @@ export const fetchRealTimeOutages = async (regionName: string): Promise<OutageEv
         }
     }
 
-    // FALLBACK: Generate simulated outages if AI fails to return valid JSON
-    // This ensures user sees *something* rather than an error if the AI just couldn't find real news.
-    // We only fallback if we really want "demo" mode behavior. 
-    // If we want real data only, we should return [].
-    // Assuming user prefers Demo data over empty data for resilience test:
-    logSystemError("Outage Fetch Failed", "Fallback to simulated data", "info");
-    const region = REGIONS.find(r => r.name === regionName) || REGIONS[0];
-    const fallbackOutages: OutageEvent[] = [];
-    const count = 3 + Math.floor(Math.random() * 3);
-    
-    for(let i=0; i<count; i++) {
-        fallbackOutages.push({
-            id: `fb_outage_${Date.now()}_${i}`,
-            locationName: `Simulated Incident ${i+1}`,
-            lat: region.lat + (Math.random() - 0.5) * 1.5, // 1.5 degree spread
-            lng: region.lng + (Math.random() - 0.5) * 2.5,
-            consumersAffected: Math.floor(Math.random() * 5000) + 100,
-            description: "Reported supply interruption (Live Simulation)",
-            startTime: new Date(Date.now() - Math.random()*86400000).toISOString(),
-            estRestoration: "TBC",
-            source: "DNO Simulation Feed",
-            status: 'Active',
-            isSimulated: true // Explicitly marked as simulated
-        });
-    }
-    
-    outageCache.set(key, { timestamp: now, data: fallbackOutages });
-    return fallbackOutages;
+
+    const live = await livePromise;
+    const result = [...live, ...aiOutages];
+    outageCache.set(key, { timestamp: now, data: result });
+    return result;
 };
 
 export const fetchHistoricalOutages = async (regionName: string, year: number = 2024): Promise<OutageEvent[]> => {

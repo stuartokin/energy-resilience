@@ -38,7 +38,8 @@ export interface DNORegion {
     color: string;
     households: number;
     industryCount: number;
-    path: {lat: number, lng: number}[];
+    path: {lat: number, lng: number}[]; // rough outline (fallback)
+    polygons?: [number, number][][];    // real boundary rings [lat, lng] from NESO, when available
 }
 
 export interface OutageEvent {

@@ -4,6 +4,12 @@
 // If every server fails, the script exits without error and the app falls back to live queries.
 
 import { writeFileSync, mkdirSync } from 'node:fs';
+import { buildDnoAreas } from './build-dno-areas.mjs';
+
+// 1. DNO licence-area boundaries (small, quick). Failure here never blocks the rest.
+try { await buildDnoAreas(); } catch (e) { console.warn('DNO boundaries skipped:', e.message); }
+
+// 2. OpenStreetMap infrastructure snapshot.
 
 const ENDPOINTS = [
     'https://overpass-api.de/api/interpreter',

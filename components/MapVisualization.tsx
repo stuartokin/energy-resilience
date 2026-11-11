@@ -290,8 +290,11 @@ const MapVisualization: React.FC<MapProps> = ({
         dnoLayer?.clearLayers();
         if (dnoLayer && filters.has('DNO Regions') && dnoRegions) {
             dnoRegions.forEach(dno => {
-                const polygon = L.polygon(dno.path.map(p => [p.lat, p.lng] as [number, number]), {
-                    color: dno.color, opacity: 0.8, weight: 2, fillColor: dno.color, fillOpacity: 0.15
+                const latlngs: any = dno.polygons && dno.polygons.length
+                    ? dno.polygons.map(ring => [ring])          // multipolygon: real NESO boundary
+                    : dno.path.map(p => [p.lat, p.lng] as [number, number]); // rough fallback outline
+                const polygon = L.polygon(latlngs, {
+                    color: dno.color, opacity: 0.8, weight: 1.5, fillColor: dno.color, fillOpacity: 0.12
                 });
                 polygon.bindPopup(`<div style="padding:10px 12px"><b>${esc(dno.name)}</b><br><span style="color:#94a3b8">${esc(dno.operator)}</span></div>`);
                 polygon.addTo(dnoLayer);
