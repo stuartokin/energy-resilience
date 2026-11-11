@@ -6,7 +6,7 @@ By Stuart Okin, Director of Cyber Regulation and Emerging Technologies, Ofgem. A
 
 ## What works without any setup
 
-- **Map** of generation, transmission, distribution and interconnectors (OpenStreetMap data, CARTO dark tiles)
+- **Map** of generation, transmission, distribution and interconnectors (OpenStreetMap data, Esri dark grey basemap)
 - **Live grid data**: frequency and demand from Elexon, generation mix and carbon intensity from NESO
 - **Weather radar** (RainViewer)
 - **Built-in scenarios** with a day-by-day timeline of customers off supply, cost and restoration
@@ -100,7 +100,7 @@ Then open http://localhost:3000.
 | [Elexon Insights (BMRS)](https://bmrs.elexon.co.uk/api-documentation) | Grid frequency, rolling demand | No |
 | [NESO Carbon Intensity](https://carbonintensity.org.uk) | Generation mix, carbon intensity | No |
 | [OpenStreetMap](https://www.openstreetmap.org) / Overpass / Nominatim | Infrastructure, place search | No |
-| [CARTO basemaps](https://carto.com/basemaps) | Map tiles | No |
+| [Esri World Dark Gray Canvas](https://www.arcgis.com/home/item.html?id=358ec1e175ea41c3bf5c68f0da11ae2b) | Map tiles | No |
 | [RainViewer](https://www.rainviewer.com/api.html) | Weather radar | No |
 | [Google Gemini](https://ai.google.dev) | AI features | Visitor's own key |
 

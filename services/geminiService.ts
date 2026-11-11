@@ -74,7 +74,7 @@ export const getApiSystemStatus = () => {
         { org: "Elexon Insights (BMRS)", status: "Operational", keyStatus: "Open Data", type: "Frequency & Demand" },
         { org: "NESO Carbon Intensity", status: "Operational", keyStatus: "Open Data", type: "Generation Mix" },
         { org: "OpenStreetMap / Overpass", status: "Operational", keyStatus: "Open Data", type: "Infrastructure & Search" },
-        { org: "CARTO Basemaps", status: "Operational", keyStatus: "Open Data", type: "Map Tiles" },
+        { org: "Esri Dark Gray Canvas", status: "Operational", keyStatus: "Public", type: "Map Tiles" },
         { org: "RainViewer", status: "Operational", keyStatus: "Public", type: "Weather Radar" },
     ];
 };

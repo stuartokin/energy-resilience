@@ -38,9 +38,11 @@ const getVoltageColor = (tags: any) => {
     return '#64748b'; 
 };
 
-// Free basemap: OpenStreetMap data, CARTO dark tiles. No API key required.
-const BASEMAP_URL = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
-const BASEMAP_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a> | Radar &copy; <a href="https://www.rainviewer.com">RainViewer</a>';
+// Free basemap with no API key: Esri World Dark Gray Canvas (base + labels).
+// (CARTO now requires an API key for sites other than localhost.)
+const BASEMAP_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}';
+const LABELS_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}';
+const BASEMAP_ATTRIBUTION = 'Basemap &copy; <a href="https://www.esri.com">Esri</a>, HERE, Garmin, &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | Radar &copy; <a href="https://www.rainviewer.com">RainViewer</a>';
 
 // Escape text that may come from AI or external feeds before putting it in a popup.
 const esc = (v: any) => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
@@ -146,7 +148,12 @@ const MapVisualization: React.FC<MapProps> = ({
             preferCanvas: true,
             worldCopyJump: true
         });
-        L.tileLayer(BASEMAP_URL, { attribution: BASEMAP_ATTRIBUTION, subdomains: 'abcd', maxZoom: 19 }).addTo(map);
+        L.tileLayer(BASEMAP_URL, { attribution: BASEMAP_ATTRIBUTION, maxNativeZoom: 16, maxZoom: 19, className: 'basemap-tiles' }).addTo(map);
+        // Place-name labels sit above the infrastructure so towns stay readable
+        map.createPane('labels');
+        const labelsPane = map.getPane('labels');
+        if (labelsPane) { labelsPane.style.zIndex = '450'; labelsPane.style.pointerEvents = 'none'; }
+        L.tileLayer(LABELS_URL, { pane: 'labels', maxNativeZoom: 16, maxZoom: 19, opacity: 0.7 }).addTo(map);
         outageLayerRef.current = L.layerGroup().addTo(map);
         dnoLayerRef.current = L.layerGroup().addTo(map);
 
