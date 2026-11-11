@@ -2,13 +2,14 @@
 import { GoogleGenAI, Modality, Type, FunctionDeclaration } from "@google/genai";
 import { RiskScenario, InfrastructureAsset, TimelineStep, ChatMessage, OutageEvent, GenerationMix, SupplyChainInsight, LogEntry } from '../types';
 import { ASSET_TYPES, DEEP_SEARCH_PROTOCOLS, REGIONS } from '../constants';
+import { getAiKey, onAiKeyChange, requestAiKey } from './aiKey';
 
 let aiClient: GoogleGenAI | null = null;
 let isAudioQuotaExceeded = false;
 let isGenAIQuotaExceeded = false; // Track general API health
 
-// API Keys
-const ELEXON_API_KEY = "qsa7nue0wl6r4bg";
+// Elexon Insights Solution API: free, open, no key required.
+const ELEXON_API = 'https://data.elexon.co.uk/bmrs/api/v1';
 
 // Simple In-Memory Cache
 const analysisCache = new Map<string, string>();
@@ -31,13 +32,25 @@ export const logSystemError = (message: string, details?: any, type: 'error'|'wa
 
 export const getSystemLogs = () => [...systemLogs].reverse();
 
+// The Gemini key is supplied by each visitor and stored in their own browser.
 export const initGenAI = () => {
-    if (process.env.API_KEY) {
-        aiClient = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const key = getAiKey();
+    if (key) {
+        aiClient = new GoogleGenAI({ apiKey: key });
+        isGenAIQuotaExceeded = false;
     } else {
-        logSystemError("API_KEY missing", "process.env.API_KEY is not defined", "error");
+        aiClient = null;
     }
 };
+
+// Rebuild the client whenever the visitor adds, changes or removes their key.
+if (typeof window !== 'undefined') {
+    onAiKeyChange(() => {
+        aiClient = null;
+        isAudioQuotaExceeded = false;
+        initGenAI();
+    });
+}
 
 const handleApiError = (e: any) => {
     // Detect Quota Limit (429) or Service Unavailable (503)
@@ -50,25 +63,19 @@ const handleApiError = (e: any) => {
 };
 
 export const getApiSystemStatus = () => {
+    const hasKey = !!getAiKey();
     return [
-        { 
-            org: "Google GenAI", 
-            status: isGenAIQuotaExceeded ? "Degraded" : "Operational", 
-            keyStatus: isGenAIQuotaExceeded ? "Quota Limit" : "Valid", 
-            type: "Platform" 
+        {
+            org: "Google Gemini (your key)",
+            status: !hasKey ? "Not set" : isGenAIQuotaExceeded ? "Degraded" : "Operational",
+            keyStatus: !hasKey ? "Add key to enable AI" : isGenAIQuotaExceeded ? "Quota Limit" : "Your key",
+            type: "AI Analysis"
         },
+        { org: "Elexon Insights (BMRS)", status: "Operational", keyStatus: "Open Data", type: "Frequency & Demand" },
+        { org: "NESO Carbon Intensity", status: "Operational", keyStatus: "Open Data", type: "Generation Mix" },
+        { org: "OpenStreetMap / Overpass", status: "Operational", keyStatus: "Open Data", type: "Infrastructure & Search" },
+        { org: "CARTO Basemaps", status: "Operational", keyStatus: "Open Data", type: "Map Tiles" },
         { org: "RainViewer", status: "Operational", keyStatus: "Public", type: "Weather Radar" },
-        { org: "Overpass API (OSM)", status: "Operational", keyStatus: "Public", type: "Open Data" },
-        { org: "Elexon BMRS", status: "Operational", keyStatus: "Valid", type: "Wholesale Data" },
-        { org: "National Grid ESO", status: "Operational", keyStatus: "Open Access", type: "Standard" },
-        { org: "UK Power Networks", status: "Connected", keyStatus: "Valid", type: "Enterprise" },
-        { org: "SP Energy Networks", status: "Connected", keyStatus: "Valid", type: "Enterprise" },
-        { org: "SSEN Transmission", status: "Connected", keyStatus: "Valid", type: "Enterprise" },
-        { org: "SSEN NERDA", status: "Connected", keyStatus: "Valid", type: "Secure Token" },
-        { org: "Northern Powergrid", status: "Connected", keyStatus: "Valid", type: "Enterprise" },
-        { org: "Electricity North West", status: "Connected", keyStatus: "Valid", type: "Enterprise" },
-        { org: "National Grid Dist.", status: "Connected", keyStatus: "Valid", type: "JWT Token" },
-        { org: "Cadent Gas", status: "Connected", keyStatus: "Valid", type: "Open Data" },
     ];
 };
 
@@ -380,63 +387,63 @@ export const searchInfrastructureAssets = async (
     }
 };
 
+const fetchWithTimeout = async (url: string, ms = 6000) => {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), ms);
+    try {
+        return await fetch(url, { signal: controller.signal });
+    } finally {
+        clearTimeout(id);
+    }
+};
+
+// Live GB grid snapshot: Elexon (frequency, demand) + NESO Carbon Intensity.
 export const fetchNESOPowerData = async (): Promise<{demand: number, frequency: number, carbonIntensity: number}> => {
     let demand = 0;
-    let frequency = 50.0;
+    let frequency = 0;
     let carbonIntensity = 0;
-    const ts = Date.now();
+    const now = new Date();
+    const from = new Date(now.getTime() - 10 * 60 * 1000).toISOString();
 
     try {
-        // Use AllOrigins Proxy to avoid CORS issues with Elexon BMRS in browser
-        const proxy = "https://api.allorigins.win/raw?url=";
-        const elexonFreqUrl = `${proxy}${encodeURIComponent(`https://api.bmreports.com/BMRS/FREQ/v1?APIKey=${ELEXON_API_KEY}&ServiceType=xml`)}&_=${ts}`;
-        const elexonDemandUrl = `${proxy}${encodeURIComponent(`https://api.bmreports.com/BMRS/ROLLING_SYSTEM_DEMAND/v1?APIKey=${ELEXON_API_KEY}&ServiceType=xml`)}&_=${ts}`;
-
-        const [elexonFreq, elexonDemand, carbon] = await Promise.allSettled([
-            fetch(elexonFreqUrl),
-            fetch(elexonDemandUrl),
-            fetch('https://api.carbonintensity.org.uk/intensity')
+        const [freqRes, demandRes, carbonRes] = await Promise.allSettled([
+            fetchWithTimeout(`${ELEXON_API}/system/frequency?from=${from}&to=${now.toISOString()}&format=json`),
+            fetchWithTimeout(`${ELEXON_API}/demand/outturn/summary?format=json`),
+            fetchWithTimeout('https://api.carbonintensity.org.uk/intensity')
         ]);
 
-        // 1. Process Elexon Frequency
-        if (elexonFreq.status === 'fulfilled' && elexonFreq.value.ok) {
-            const text = await elexonFreq.value.text();
-            // XML: <response><...><freq>50.012</freq>
-            const match = text.match(/<freq>([\d.]+)<\/freq>/i);
-            if (match) frequency = parseFloat(match[1]);
+        // 1. Frequency (15-second readings) - take the latest
+        if (freqRes.status === 'fulfilled' && freqRes.value.ok) {
+            const json = await freqRes.value.json();
+            const rows = json.data || [];
+            const latest = rows[rows.length - 1];
+            if (latest?.frequency) frequency = latest.frequency;
         }
 
-        // 2. Process Elexon Demand
-        if (elexonDemand.status === 'fulfilled' && elexonDemand.value.ok) {
-            const text = await elexonDemand.value.text();
-            // XML: <val>32450</val> inside items. Get the most recent value.
-            const matches = [...text.matchAll(/<val>([\d.]+)<\/val>/gi)];
-            if (matches.length > 0) {
-                 demand = parseFloat(matches[matches.length - 1][1]);
-            }
+        // 2. Rolling system demand (5-minute) - take the latest
+        if (demandRes.status === 'fulfilled' && demandRes.value.ok) {
+            const rows = await demandRes.value.json();
+            const list = Array.isArray(rows) ? rows : rows.data || [];
+            const latest = list[list.length - 1];
+            if (latest?.demand) demand = latest.demand;
         }
 
-        // 3. Process Carbon Intensity
-        if (carbon.status === 'fulfilled' && carbon.value.ok) {
-            const data = await carbon.value.json();
-            carbonIntensity = data.data?.[0]?.intensity?.actual || 0;
+        // 3. Carbon intensity
+        if (carbonRes.status === 'fulfilled' && carbonRes.value.ok) {
+            const data = await carbonRes.value.json();
+            carbonIntensity = data.data?.[0]?.intensity?.actual || data.data?.[0]?.intensity?.forecast || 0;
         }
-
     } catch (e: any) {
         console.warn("Real-time data fetch warning", e);
-        logSystemError("NESO/Elexon Fetch Error", e.message, "warning");
+        logSystemError("Elexon / NESO fetch error", e.message, "warning");
     }
 
-    // Fallbacks
+    // Fallbacks (only used if the open data services are unreachable)
     if (demand === 0) {
-        // Simulate demand using a baseline + noise if API fails
+        logSystemError("Live demand unavailable", "Using estimated demand profile", "warning");
         const hour = new Date().getHours();
-        const baseDemand = 22000;
-        const peakAdder = (hour > 7 && hour < 22) ? 15000 : 0;
-        const noise = Math.random() * 2000;
-        demand = Math.floor(baseDemand + peakAdder + noise);
+        demand = Math.floor(22000 + ((hour > 7 && hour < 22) ? 15000 : 0) + Math.random() * 2000);
     }
-    
     if (frequency === 0) frequency = 50.0 + ((Math.random() - 0.5) * 0.1);
     if (carbonIntensity === 0) carbonIntensity = 150;
 
@@ -518,36 +525,33 @@ export const fetchGridHistory = async (metric: 'demand' | 'frequency', range: '2
         if (metric === 'frequency') anchorValue = 50.0;
     }
 
-    // 2. Attempt Real API Fetch for History (Demand only, 24h primarily)
+    // 2. Real history from Elexon for the last 24 hours
     let fetchedData: { timestamp: number, value: number }[] = [];
-    if (metric === 'demand' && range === '24h') {
+    if (range === '24h') {
         try {
-            // Elexon BMRS via AllOrigins Proxy
-            const url = `https://api.bmreports.com/BMRS/ROLLING_SYSTEM_DEMAND/v1?APIKey=${ELEXON_API_KEY}&ServiceType=xml`;
-            const proxy = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}&_=${now}`;
-            
-            const controller = new AbortController();
-            const id = setTimeout(() => controller.abort(), 5000);
-            const resp = await fetch(proxy, { signal: controller.signal });
-            clearTimeout(id);
-
-            if (resp.ok) {
-                const text = await resp.text();
-                // Matches <item><sd>...</sd><st>...</st><val>...</val></item>
-                const matches = [...text.matchAll(/<item>[\s\S]*?<\/item>/gi)];
-                matches.forEach(m => {
-                    const s = m[0];
-                    const d = s.match(/<sd>([\d-]+)<\/sd>/i)?.[1];
-                    const t = s.match(/<st>([\d:]+)<\/st>/i)?.[1];
-                    const v = s.match(/<val>([\d.]+)<\/val>/i)?.[1];
-                    if (d && t && v) {
-                        const time = new Date(`${d}T${t}`).getTime();
-                        const val = parseFloat(v);
-                        if (!isNaN(time) && !isNaN(val)) {
-                            fetchedData.push({ timestamp: time, value: val });
-                        }
-                    }
-                });
+            if (metric === 'demand') {
+                const resp = await fetchWithTimeout(`${ELEXON_API}/demand/outturn/summary?format=json`, 8000);
+                if (resp.ok) {
+                    const rows = await resp.json();
+                    const list = Array.isArray(rows) ? rows : rows.data || [];
+                    const cutoff = now - 86400000;
+                    list.forEach((r: any) => {
+                        const t = new Date(r.startTime).getTime();
+                        if (t >= cutoff && typeof r.demand === 'number') fetchedData.push({ timestamp: t, value: r.demand });
+                    });
+                }
+            } else {
+                const from = new Date(now - 86400000).toISOString();
+                const to = new Date(now).toISOString();
+                const resp = await fetchWithTimeout(`${ELEXON_API}/system/frequency?from=${from}&to=${to}&format=json`, 10000);
+                if (resp.ok) {
+                    const json = await resp.json();
+                    const rows = json.data || [];
+                    // 15-second data: keep one reading per 5 minutes for the chart
+                    rows.forEach((r: any, i: number) => {
+                        if (i % 20 === 0) fetchedData.push({ timestamp: new Date(r.measurementTime).getTime(), value: r.frequency });
+                    });
+                }
             }
         } catch (e) {
             console.warn("Elexon history fetch error", e);
@@ -605,7 +609,7 @@ export const fetchGridHistory = async (metric: 'demand' | 'frequency', range: '2
 
 export const analyzeGridHistory = async (metric: string, range: string, data: { timestamp: number, value: number }[]) => {
     if (!aiClient) initGenAI();
-    if (!aiClient) return "Analysis unavailable.";
+    if (!aiClient) return "AI analysis needs a Gemini key. Click \"AI: Off\" in the top bar to add your free key.";
 
     // Sample data to reduce token count (take every nth point)
     const sampleRate = Math.ceil(data.length / 20);
@@ -635,7 +639,20 @@ export const analyzeGridHistory = async (metric: string, range: string, data: { 
     }
 };
 
+// Place search: free OpenStreetMap Nominatim first, Gemini as a fallback if the visitor has a key.
 export const getCoordinatesForLocation = async (location: string): Promise<{lat: number, lng: number} | null> => {
+    try {
+        const resp = await fetchWithTimeout(
+            `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(location)}`, 6000
+        );
+        if (resp.ok) {
+            const rows = await resp.json();
+            if (rows?.[0]?.lat && rows?.[0]?.lon) return { lat: parseFloat(rows[0].lat), lng: parseFloat(rows[0].lon) };
+        }
+    } catch (e: any) {
+        logSystemError("Place search (OpenStreetMap) failed", e.message, "warning");
+    }
+
     if (!aiClient) initGenAI();
     if (!aiClient) return null;
     const prompt = `Return the Latitude and Longitude for: "${location}". Return ONLY a pure JSON object without markdown or comments: {"lat": 12.34, "lng": 56.78}.`;
@@ -700,7 +717,7 @@ export const fetchEnergyInfrastructure = async (
 
 export const generateCustomScenario = async (userQuery: string, region: string): Promise<RiskScenario | null> => {
     if (!aiClient) initGenAI();
-    if (!aiClient) return null;
+    if (!aiClient) { requestAiKey(); return null; }
     const isDeepSearch = !userQuery.trim();
     const promptText = isDeepSearch 
         ? `Conduct a DEEP SWEEP threat assessment for ${region}. Search across ALL risk categories (Storm, Cyber, Asset Failure, Geopolitical, Supply Chain) for the single most probable and high-impact scenario currently. Do not default to generic results.`
@@ -971,7 +988,7 @@ export const analyzeAssetRisks = async (asset: InfrastructureAsset, region: stri
     }
 
     if (!aiClient) initGenAI();
-    if (!aiClient) return "Analysis unavailable.";
+    if (!aiClient) return "AI analysis needs a Gemini key. Click \"AI: Off\" in the top bar to add your free key.";
     
     const prompt = `Analyze the strategic importance and risks for: Asset: ${asset.name} Type: ${asset.typeId} Region: ${region}. 
     Provide a concise 3 bullet point summary of: 
@@ -1049,7 +1066,7 @@ export const generateSupplyChainAnalysis = async (region: string): Promise<Suppl
 // 5. Chat Analyst with Map Control Tools
 export const chatWithAnalyst = async (history: ChatMessage[], context: any, newMessage: string) => {
     if (!aiClient) initGenAI();
-    if (!aiClient) return { text: "Analyst offline.", toolCall: null };
+    if (!aiClient) { requestAiKey(); return { text: "The AI analyst needs a Gemini key. Click \"AI: Off\" in the top bar to add your free key.", toolCall: null }; }
     
     const systemInstruction = `You are a Senior Energy Resilience Consultant.
     Context Region: ${context.region}
@@ -1222,6 +1239,7 @@ export const generateNarratedAudio = async (script: string) => {
 
 export const generateSlideshowImages = async (scenarioName: string) => {
     if (!aiClient) initGenAI();
+    if (!aiClient) return [];
     try {
         const prompt = `Photorealistic images of energy infrastructure during ${scenarioName}: storm damaged power lines, cyber security operations center, repair crews in rain, control room screens.`;
          const response = await aiClient.models.generateContent({
@@ -1240,9 +1258,7 @@ export const generateSlideshowImages = async (scenarioName: string) => {
 };
 
 export const generateIncidentVideo = async (scenario: RiskScenario) => {
-    if (process.env.API_KEY) {
-        aiClient = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    }
+    if (!aiClient) initGenAI();
     if (!aiClient) return null;
     try {
         const prompt = `Cinematic drone footage of ${scenario.name} affecting energy infrastructure in ${scenario.region}. ${scenario.category} weather conditions. Dark, dramatic lighting. High quality, 4k.`;
@@ -1260,7 +1276,7 @@ export const generateIncidentVideo = async (scenario: RiskScenario) => {
             operation = await aiClient.operations.getVideosOperation({operation: operation});
         }
         const videoUri = operation.response?.generatedVideos?.[0]?.video?.uri;
-        if (videoUri) return `${videoUri}&key=${process.env.API_KEY}`;
+        if (videoUri) return `${videoUri}&key=${getAiKey()}`;
     } catch (e) { 
         console.error("Video gen failed", e);
         handleApiError(e); 

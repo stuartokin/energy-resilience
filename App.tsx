@@ -27,6 +27,8 @@ import SupplyChainModal from './components/SupplyChainModal';
 import DraggablePanel from './components/DraggablePanel';
 import GenerationListPanel from './components/GenerationListPanel';
 import GridHistoryModal from './components/GridHistoryModal';
+import AiKeyModal from './components/AiKeyModal';
+import { hasAiKey, onAiKeyChange, onAiKeyRequired } from './services/aiKey';
 
 import { 
     GlobeAmericasIcon, BoltIcon, ExclamationTriangleIcon, PlayIcon, PauseIcon, 
@@ -36,7 +38,7 @@ import {
     ArrowsPointingOutIcon, ArrowsPointingInIcon, ShieldCheckIcon,
     ChevronUpIcon, MinusIcon, ListBulletIcon, ChatBubbleLeftRightIcon, WrenchScrewdriverIcon, PauseCircleIcon,
     ClockIcon, ChartBarIcon, ArrowPathRoundedSquareIcon, MapIcon, TruckIcon, PowerIcon, MapPinIcon,
-    StopCircleIcon, MagnifyingGlassIcon, StopIcon, CloudIcon
+    StopCircleIcon, MagnifyingGlassIcon, StopIcon, CloudIcon, SparklesIcon
 } from '@heroicons/react/24/solid';
 
 const getAIStudio = () => (window as any).aistudio;
@@ -197,6 +199,20 @@ export const App: React.FC = () => {
     
     const [showChat, setShowChat] = useState(true); // Always true, managed by minimization
     const [showHelp, setShowHelp] = useState(false);
+
+    // Visitor-supplied Gemini key (stored only in their browser)
+    const [aiEnabled, setAiEnabled] = useState<boolean>(hasAiKey());
+    const [showAiKey, setShowAiKey] = useState(false);
+    useEffect(() => {
+        const offChange = onAiKeyChange(() => setAiEnabled(hasAiKey()));
+        const offReq = onAiKeyRequired(() => setShowAiKey(true));
+        return () => { offChange(); offReq(); };
+    }, []);
+    const requireAi = () => {
+        if (hasAiKey()) return true;
+        setShowAiKey(true);
+        return false;
+    };
     const [helpInitialTab, setHelpInitialTab] = useState<'guide' | 'status' | 'logs'>('guide');
     const [isInfraCollapsed, setIsInfraCollapsed] = useState(false);
     const [showGenList, setShowGenList] = useState<string | null>(null);
@@ -269,12 +285,8 @@ export const App: React.FC = () => {
         };
 
         return currentAssets.map(asset => {
-            // Apply a random chance of engineering maintenance if it's a generator
-            let maintenanceOverride = false;
-            // Only simulate maintenance on major generation assets
-            if (['nuclear', 'gas', 'coal', 'biomass'].includes(asset.typeId) && Math.random() < 0.05) { // 5% chance
-                maintenanceOverride = true;
-            }
+            // No unit-level availability feed is wired in, so never invent maintenance outages.
+            const maintenanceOverride = false;
 
             const genType = Object.keys(fuelMap).find(key => fuelMap[key].includes(asset.typeId));
             
@@ -289,7 +301,7 @@ export const App: React.FC = () => {
                 
                 if (genType === 'nuclear') status = 'generating'; 
                 else if (perc > 10) status = 'generating';
-                else if (perc > 0 && Math.random() > 0.5) status = 'generating';
+                else if (perc > 0) status = 'generating';
                 else status = 'standby';
             }
 
@@ -298,7 +310,7 @@ export const App: React.FC = () => {
                 status: operationalStatus,
                 liveStatus: status,
                 liveOutputDesc: status === 'generating' 
-                    ? `Generating (${getFuelPerc(genType || '')}% of Grid Mix)` 
+                    ? `Fuel type supplying ${getFuelPerc(genType || '')}% of GB mix (estimate)` 
                     : status === 'standby' ? 'Available (Standby)' : 'Unavailable (Maintenance)'
             };
         });
@@ -626,6 +638,7 @@ export const App: React.FC = () => {
     };
 
     const handleCustomAssetSearch = async () => {
+        if (!requireAi()) return;
         if (!customAssetQuery.trim()) return;
         setIsSearchingAssets(true);
         setBackgroundTask(`Searching for "${customAssetQuery}"...`);
@@ -747,6 +760,7 @@ export const App: React.FC = () => {
     };
 
     const handleGenerateMoreScenarios = useCallback(async () => {
+        if (!requireAi()) return;
         setIsLoading(true);
         setLoadingProgress(20);
         setLoadingMessage("AI Generating New Risk Scenarios...");
@@ -816,6 +830,7 @@ export const App: React.FC = () => {
     }, []);
 
     const handleGenerateReport = async () => {
+        if (!requireAi()) return;
         if (activeScenarios.length === 0) return;
         setIsGeneratingReport(true);
         setReportGenerationStep(1); 
@@ -857,6 +872,7 @@ export const App: React.FC = () => {
     };
 
     const handleRunSupplyChainAnalysis = async () => {
+        if (!requireAi()) return;
         setIsSupplyChainLoading(true);
         setShowSupplyChainModal(true);
         setSupplyChainProgress(10);
@@ -1295,6 +1311,19 @@ export const App: React.FC = () => {
                             <ArrowDownTrayIcon className="w-5 h-5" />
                         </button>
                         
+                        <button
+                            onClick={() => setShowAiKey(true)}
+                            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded border text-xs font-bold transition-colors ${
+                                aiEnabled
+                                    ? 'border-cyan-800 bg-cyan-950/40 text-cyan-300 hover:bg-cyan-900/40'
+                                    : 'border-amber-700 bg-amber-950/40 text-amber-300 hover:bg-amber-900/40 animate-pulse'
+                            }`}
+                            title={aiEnabled ? 'AI features on (your Gemini key). Click to manage.' : 'Add your free Gemini key to turn on AI features'}
+                        >
+                            <SparklesIcon className="w-4 h-4" />
+                            <span>{aiEnabled ? 'AI: On' : 'AI: Off'}</span>
+                        </button>
+
                         <div className="h-6 w-px bg-slate-800 mx-2"></div>
                         <button onClick={() => { setHelpInitialTab('guide'); setShowHelp(true); }} className="text-slate-400 hover:text-white shrink-0"><QuestionMarkCircleIcon className="w-5 h-5" /></button>
                     </div>
@@ -2058,6 +2087,8 @@ export const App: React.FC = () => {
                     scenarioName={`${activeScenarios.length > 0 ? (activeScenarios[0].name || "Report") : "Report"}`}
                 />
             )}
+
+            {showAiKey && <AiKeyModal onClose={() => setShowAiKey(false)} />}
 
             {/* Consolidated Help Modal (Restores Missing Data) */}
             {showHelp && (

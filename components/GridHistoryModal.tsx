@@ -122,7 +122,7 @@ const GridHistoryModal: React.FC<GridHistoryModalProps> = ({ metric, onClose }) 
                                 <Tooltip 
                                     contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f1f5f9' }}
                                     itemStyle={{ fontSize: '12px' }}
-                                    labelFormatter={(l) => new Date(l).toLocaleString()}
+                                    labelFormatter={(l) => new Date(l as number).toLocaleString()}
                                     formatter={(value: any) => [
                                         metric === 'demand' ? `${(value/1000).toFixed(2)} GW` : `${value.toFixed(3)} Hz`, 
                                         metric === 'demand' ? 'Demand' : 'Frequency'

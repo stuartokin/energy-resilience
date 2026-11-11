@@ -1,8 +1,8 @@
 import { AssetType, InfrastructureAsset, RegionConfig, RiskScenario, TimelineStep, DNORegion } from './types';
 
-export const APP_VERSION = "2.9.2";
+export const APP_VERSION = "3.0.0";
 export const BUILD_DATE = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-export const AI_BUILD_ID = "Gemini-1.5-Pro-002";
+export const AI_BUILD_ID = "Gemini 2.5 Flash (visitor key)";
 
 // SVG Paths for Google Maps Symbols
 const ICONS = {
