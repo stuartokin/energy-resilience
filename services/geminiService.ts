@@ -109,114 +109,50 @@ const extractJSON = (text: string) => {
     }
 };
 
-// Helper for Robust Fetching with Retry
-const fetchOverpassWithRetry = async (query: string, signal?: AbortSignal, retries = 3, delay = 2000): Promise<any> => {
-    for (let i = 0; i <= retries; i++) {
+// Public Overpass servers (free). Busy servers often return 429/502/504, so try the next one.
+const OVERPASS_ENDPOINTS = [
+    'https://overpass-api.de/api/interpreter',
+    'https://overpass.private.coffee/api/interpreter',
+    'https://overpass.kumi.systems/api/interpreter',
+];
+let preferredOverpass = 0;
+
+const fetchOverpassWithRetry = async (query: string, signal?: AbortSignal, perRequestMs = 45000): Promise<any> => {
+    let lastErr: any = null;
+    for (let k = 0; k < OVERPASS_ENDPOINTS.length; k++) {
+        const idx = (preferredOverpass + k) % OVERPASS_ENDPOINTS.length;
+        const url = OVERPASS_ENDPOINTS[idx];
+        const controller = new AbortController();
+        const onAbort = () => controller.abort();
+        signal?.addEventListener('abort', onAbort);
+        const timer = setTimeout(() => controller.abort(), perRequestMs);
         try {
-            const response = await fetch('https://overpass-api.de/api/interpreter', {
+            const response = await fetch(url, {
                 method: 'POST',
                 body: `data=${encodeURIComponent(query)}`,
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                signal
+                signal: controller.signal
             });
-            
             if (response.ok) {
+                preferredOverpass = idx; // remember the server that worked
                 return await response.json();
             }
-            
-            // Retry on 429 (Rate Limit), 504 (Gateway Timeout), 502 (Bad Gateway), 500 (Internal Error)
-            if ([429, 500, 502, 503, 504].includes(response.status)) {
-                if (i < retries) {
-                    const backoff = delay * (i + 1); // Linear backoff
-                    console.warn(`Overpass API Retry ${i + 1}/${retries} (${response.status}) in ${backoff}ms`);
-                    await new Promise(res => setTimeout(res, backoff)); 
-                    continue;
-                }
-            }
-            
-            throw new Error(`Overpass API Error ${response.status}`);
+            lastErr = new Error(`Overpass ${new URL(url).host} returned ${response.status}`);
         } catch (e: any) {
-            if (e.name === 'AbortError') throw e;
-            if (i === retries) throw e;
-            const backoff = delay * (i + 1);
-            console.warn(`Overpass Net Error Retry ${i + 1}/${retries}: ${e.message}`);
-            await new Promise(res => setTimeout(res, backoff));
+            if (signal?.aborted) throw e;
+            lastErr = e;
+        } finally {
+            clearTimeout(timer);
+            signal?.removeEventListener('abort', onAbort);
         }
+        console.warn(`Overpass server failed, trying next: ${lastErr?.message}`);
     }
+    throw lastErr || new Error('All Overpass servers failed');
 };
 
-// --- Overpass API Integration ---
-// Updated to split queries to ensure robust fetching of interconnectors and power lines
-const fetchOverpassData = async (lat: number, lng: number, scope: 'national' | 'local', onProgress?: (msg: string) => void, signal?: AbortSignal): Promise<InfrastructureAsset[]> => {
-    if (onProgress) onProgress(`Querying OSM (${scope.toUpperCase()} scope)...`);
-
-    const delta = scope === 'national' ? 4.5 : 0.6;
-    const limit = scope === 'national' ? 3000 : 1500;
-    
-    const s = lat - delta;
-    const w = lng - (delta * 1.5);
-    const n = lat + delta;
-    const e = lng + (delta * 1.5);
-
-    let queries: string[] = [];
-
-    if (scope === 'national') {
-        // Query 1: Generation & High Voltage Lines (National)
-        // Increased timeout to 180 to prevent 504s on heavy loads
-        queries.push(`
-            [out:json][timeout:180];
-            (
-                node["power"="plant"]["plant:source"~"nuclear|wind|hydro"](${s},${w},${n},${e});
-                way["power"="plant"]["plant:source"~"nuclear|wind|hydro"](${s},${w},${n},${e});
-                
-                way["power"="line"]["voltage"~"400000|275000|132000|320000"](${s},${w},${n},${e});
-                way["power"="cable"]["voltage"~"400000|275000|132000|320000"](${s},${w},${n},${e});
-            );
-            out geom ${limit};
-        `);
-
-        // Query 2: Infrastructure Lines (Interconnectors, Pipelines) - Slower, heavier geometry
-        queries.push(`
-            [out:json][timeout:180];
-            (
-                node["power"="cable"]["location"="underwater"](${s},${w},${n},${e}); 
-                way["power"="cable"]["location"="underwater"](${s},${w},${n},${e});
-                node["man_made"="pipeline"]["substance"="gas"]["location"="underwater"](${s},${w},${n},${e});
-                way["man_made"="pipeline"]["substance"="gas"]["location"="underwater"](${s},${w},${n},${e});
-            );
-            out geom 500;
-        `);
-    } else {
-        // Query 3: Local/Distribution Assets (Substations, 33kV/11kV lines, Datacenters)
-        queries.push(`
-            [out:json][timeout:120];
-            (
-                node["power"="substation"](${s},${w},${n},${e});
-                way["power"="substation"](${s},${w},${n},${e});
-                
-                node["telecom"="data_center"](${s},${w},${n},${e});
-                way["building"="data_center"](${s},${w},${n},${e});
-                
-                node["power"="generator"]["generator:source"="solar"](${s},${w},${n},${e});
-                way["power"="generator"]["generator:source"="solar"](${s},${w},${n},${e});
-                node["power"="plant"]["plant:source"="battery"](${s},${w},${n},${e});
-                way["power"="plant"]["plant:source"="battery"](${s},${w},${n},${e});
-                
-                way["power"="line"](${s},${w},${n},${e});
-                way["power"="minor_line"](${s},${w},${n},${e});
-                way["power"="cable"](${s},${w},${n},${e});
-                
-                way["man_made"="pipeline"]["substance"="gas"](${s},${w},${n},${e});
-            );
-            out geom ${limit};
-        `);
-    }
-
-    try {
-        const results = await Promise.all(queries.map(q => fetchOverpassWithRetry(q, signal)));
-        const elements = results.map(r => r.elements || []).flat();
-
-        return elements.map((el: any) => {
+// Convert OpenStreetMap (Overpass) elements into map assets.
+export const osmElementsToAssets = (elements: any[]): InfrastructureAsset[] => {
+    return elements.map((el: any) => {
             const tags = el.tags || {};
             const isDc = tags.telecom === 'data_center' || tags.building === 'data_center';
             const isSub = tags.power === 'substation';
@@ -295,7 +231,86 @@ const fetchOverpassData = async (lat: number, lng: number, scope: 'national' | '
                 path: path,
                 rawTags: tags 
             };
-        }).filter((x: any) => x !== null);
+    }).filter((x: any) => x !== null) as InfrastructureAsset[];
+};
+
+// --- Overpass API Integration ---
+// Updated to split queries to ensure robust fetching of interconnectors and power lines
+const fetchOverpassData = async (lat: number, lng: number, scope: 'national' | 'local', onProgress?: (msg: string) => void, signal?: AbortSignal): Promise<InfrastructureAsset[]> => {
+    if (onProgress) onProgress(`Querying OSM (${scope.toUpperCase()} scope)...`);
+
+    const delta = scope === 'national' ? 4.5 : 0.6;
+    const limit = scope === 'national' ? 3000 : 1500;
+    
+    const s = lat - delta;
+    const w = lng - (delta * 1.5);
+    const n = lat + delta;
+    const e = lng + (delta * 1.5);
+
+    let queries: string[] = [];
+
+    if (scope === 'national') {
+        // Query 1: Generation & High Voltage Lines (National)
+        // Increased timeout to 180 to prevent 504s on heavy loads
+        queries.push(`
+            [out:json][timeout:60];
+            (
+                node["power"="plant"]["plant:source"~"nuclear|wind|hydro"](${s},${w},${n},${e});
+                way["power"="plant"]["plant:source"~"nuclear|wind|hydro"](${s},${w},${n},${e});
+                
+                way["power"="line"]["voltage"~"400000|275000|132000|320000"](${s},${w},${n},${e});
+                way["power"="cable"]["voltage"~"400000|275000|132000|320000"](${s},${w},${n},${e});
+            );
+            out geom ${limit};
+        `);
+
+        // Query 2: Infrastructure Lines (Interconnectors, Pipelines) - Slower, heavier geometry
+        queries.push(`
+            [out:json][timeout:60];
+            (
+                node["power"="cable"]["location"="underwater"](${s},${w},${n},${e}); 
+                way["power"="cable"]["location"="underwater"](${s},${w},${n},${e});
+                node["man_made"="pipeline"]["substance"="gas"]["location"="underwater"](${s},${w},${n},${e});
+                way["man_made"="pipeline"]["substance"="gas"]["location"="underwater"](${s},${w},${n},${e});
+            );
+            out geom 500;
+        `);
+    } else {
+        // Query 3: Local/Distribution Assets (Substations, 33kV/11kV lines, Datacenters)
+        queries.push(`
+            [out:json][timeout:120];
+            (
+                node["power"="substation"](${s},${w},${n},${e});
+                way["power"="substation"](${s},${w},${n},${e});
+                
+                node["telecom"="data_center"](${s},${w},${n},${e});
+                way["building"="data_center"](${s},${w},${n},${e});
+                
+                node["power"="generator"]["generator:source"="solar"](${s},${w},${n},${e});
+                way["power"="generator"]["generator:source"="solar"](${s},${w},${n},${e});
+                node["power"="plant"]["plant:source"="battery"](${s},${w},${n},${e});
+                way["power"="plant"]["plant:source"="battery"](${s},${w},${n},${e});
+                
+                way["power"="line"](${s},${w},${n},${e});
+                way["power"="minor_line"](${s},${w},${n},${e});
+                way["power"="cable"](${s},${w},${n},${e});
+                
+                way["man_made"="pipeline"]["substance"="gas"](${s},${w},${n},${e});
+            );
+            out geom ${limit};
+        `);
+    }
+
+    try {
+        // Keep whatever succeeds: one slow query shouldn't lose the others.
+        const settled = await Promise.allSettled(queries.map(q => fetchOverpassWithRetry(q, signal)));
+        if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+        const ok = settled.filter(r => r.status === 'fulfilled') as PromiseFulfilledResult<any>[];
+        settled.forEach(r => { if (r.status === 'rejected') logSystemError("OpenStreetMap query failed", r.reason?.message, "warning"); });
+        if (ok.length === 0) throw new Error('OpenStreetMap servers busy - showing built-in assets only');
+        const elements = ok.map(r => r.value.elements || []).flat();
+
+        return osmElementsToAssets(elements);
 
     } catch (e: any) {
         if (e.name === 'AbortError') throw e;
@@ -672,6 +687,26 @@ export const getCoordinatesForLocation = async (location: string): Promise<{lat:
 };
 
 // ... (Rest of exports below) ...
+let ukSnapshotCache: InfrastructureAsset[] | null = null;
+export let ukSnapshotDate: string | null = null;
+
+const loadUkSnapshot = async (): Promise<InfrastructureAsset[]> => {
+    if (ukSnapshotCache) return ukSnapshotCache;
+    try {
+        const resp = await fetchWithTimeout(`${import.meta.env.BASE_URL}data/osm-uk.json`, 15000);
+        if (!resp.ok) return [];
+        const json = await resp.json();
+        const elements = json.elements || [];
+        if (elements.length === 0) return [];
+        ukSnapshotDate = json.generated || null;
+        ukSnapshotCache = osmElementsToAssets(elements);
+        return ukSnapshotCache;
+    } catch (e: any) {
+        logSystemError("Infrastructure snapshot unavailable", e.message, "warning");
+        return [];
+    }
+};
+
 export const fetchEnergyInfrastructure = async (
     regionName: string,
     currentAssets: InfrastructureAsset[],
@@ -690,7 +725,14 @@ export const fetchEnergyInfrastructure = async (
     const overpassScope = scope === 'local_only' ? 'local' : 'national';
 
     try {
-        const newAssets = await fetchOverpassData(centerLat, centerLng, overpassScope, onProgress, signal);
+        let newAssets: InfrastructureAsset[] = [];
+        // UK national view: use the pre-built OpenStreetMap snapshot (refreshed weekly by GitHub Actions).
+        if (overpassScope === 'national' && (!r || r.id === 'UK')) {
+            newAssets = await loadUkSnapshot();
+        }
+        if (newAssets.length === 0) {
+            newAssets = await fetchOverpassData(centerLat, centerLng, overpassScope, onProgress, signal);
+        }
         
         // Merge to prevent duplicates
         const assetMap = new Map<string, InfrastructureAsset>();

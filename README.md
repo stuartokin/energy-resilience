@@ -31,7 +31,7 @@ The key stays in that visitor's browser and is sent only to Google. Click **Remo
 3. Open the **Actions** tab and wait for the green tick (about a minute).
 4. The site is live at `https://stuartokin.github.io/energy-resilience/`.
 
-After that, every upload to `main` republishes the site automatically.
+After that, every upload to `main` republishes the site automatically. It also rebuilds every Monday to refresh the infrastructure snapshot (see below).
 
 ```yaml
 name: Deploy to GitHub Pages
@@ -40,6 +40,8 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 1'   # every Monday 03:17 UTC: refresh the OpenStreetMap snapshot
 
 permissions:
   contents: read
@@ -59,6 +61,10 @@ jobs:
         with:
           node-version: 20
       - run: npm install
+      - name: Build OpenStreetMap infrastructure snapshot
+        run: node scripts/build-osm-snapshot.mjs
+        continue-on-error: true
+        timeout-minutes: 20
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -97,5 +103,9 @@ Then open http://localhost:3000.
 | [CARTO basemaps](https://carto.com/basemaps) | Map tiles | No |
 | [RainViewer](https://www.rainviewer.com/api.html) | Weather radar | No |
 | [Google Gemini](https://ai.google.dev) | AI features | Visitor's own key |
+
+## Infrastructure snapshot
+
+Querying OpenStreetMap for the whole of GB is slow and the free public servers are often busy. So each time the site is published (and every Monday), GitHub Actions runs `scripts/build-osm-snapshot.mjs`, which downloads power stations, high-voltage lines, interconnectors and subsea pipelines once and saves them as `data/osm-uk.json` alongside the site. Visitors load that file instantly. If the snapshot can't be built, the site still works and tries OpenStreetMap live instead.
 
 Scenario timelines and impacts are illustrative models, not forecasts. Where a live feed is unavailable, the app falls back to estimated values and records that in the system log.

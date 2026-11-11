@@ -419,9 +419,9 @@ export const App: React.FC = () => {
             setNesoData(neso);
             const mix = await fetchGenerationMix();
             setGenerationMix(mix);
-            if (mix && assets.length > 0) {
-                 const updated = calculateAssetStatus(mix, assets);
-                 setAssets(updated);
+            if (mix) {
+                 // Functional update so we never overwrite assets loaded in the meantime
+                 setAssets(prev => prev.length > 0 ? calculateAssetStatus(mix, prev) : prev);
             }
         };
         pollInitialData();
@@ -534,64 +534,53 @@ export const App: React.FC = () => {
              return;
         }
         lastLoadedRegionIdRef.current = activeRegion.id;
+        const regionId = activeRegion.id;
 
-        setIsLoading(true);
-        setLoadingProgress(0);
-        setLoadingMessage(`System Initialization: Conducting Deep Asset Discovery for ${activeRegion.name}...`);
-        
+        // 1. Show the map straight away with the built-in assets and scenarios.
+        const seedAssets = activeRegion.id === 'UK' ? UK_ASSETS_SEED : [];
+        setAssets(generationMix ? calculateAssetStatus(generationMix, seedAssets) : seedAssets);
+        setScenarios(prev => {
+            const existingUser = prev.filter(s => s.status === 'User' || s.isUserCreated);
+            const seed = activeRegion.id === 'UK' ? INITIAL_SCENARIOS : [];
+            const unique = new Map();
+            [...seed, ...existingUser].forEach(s => unique.set(s.id, s));
+            return Array.from(unique.values());
+        });
+
+        // 2. Live grid data (fast, open data).
+        fetchNESOPowerData().then(setNesoData).catch(() => {});
+        const mixPromise = fetchGenerationMix().then(mix => { setGenerationMix(mix); return mix; }).catch(() => null);
+
+        // 3. Fuller infrastructure from OpenStreetMap in the background (can be slow).
+        setBackgroundTask(`Loading infrastructure from OpenStreetMap...`);
         try {
-            const enriched = await fetchEnergyInfrastructure(
-                activeRegion.name, 
-                activeRegion.id === 'UK' ? UK_ASSETS_SEED : [], 
-                (status) => {
-                    setLoadingMessage(status);
-                    setLoadingProgress(prev => Math.min(prev + 10, 50));
-                },
-                activeRegion.lat,
-                activeRegion.lng,
-                'all'
-            );
-            
-            const finalAssets = generationMix ? calculateAssetStatus(generationMix, enriched) : enriched;
-            setAssets(finalAssets);
-            
-            setLoadingProgress(60);
-            setLoadingMessage(`Cross-referencing DNO Feeds & NESO Data...`);
+            const enriched = await fetchEnergyInfrastructure(activeRegion.name, seedAssets, undefined, activeRegion.lat, activeRegion.lng, 'all');
+            if (lastLoadedRegionIdRef.current !== regionId) return; // region changed meanwhile
+            const mix = await mixPromise;
+            setAssets(mix ? calculateAssetStatus(mix, enriched) : enriched);
+        } catch (e: any) {
+            console.warn("Infrastructure load failed", e);
+        }
+        setBackgroundTask(null);
+
+        // 4. AI extras only if the visitor has added a Gemini key.
+        if (!hasAiKey() || lastLoadedRegionIdRef.current !== regionId) return;
+        try {
+            setBackgroundTask("AI: checking live outages and generating scenarios...");
             const outages = await fetchRealTimeOutages(activeRegion.name);
             setLiveOutages(outages);
             setLastOutageCheck(new Date());
-            
-            const neso = await fetchNESOPowerData();
-            setNesoData(neso);
-            const mix = await fetchGenerationMix();
-            setGenerationMix(mix);
-            
-            if (mix && !generationMix) {
-                 setAssets(calculateAssetStatus(mix, finalAssets));
-            }
-
-            setLoadingProgress(80);
-            setLoadingMessage(`Analyzing Risk Profile via Gemini AI...`);
-            
-            const newScenarios = await generateRiskScenarios(activeRegion.name, enriched);
+            const newScenarios = await generateRiskScenarios(activeRegion.name, assetsRef.current);
             setScenarios(prev => {
-                const existingUser = prev.filter(s => s.status === 'User' || s.isUserCreated);
-                const seed = activeRegion.id === 'UK' ? INITIAL_SCENARIOS : [];
-                const all = [...seed, ...existingUser, ...newScenarios];
                 const unique = new Map();
-                all.forEach(s => unique.set(s.id, s));
+                [...prev, ...newScenarios].forEach(s => unique.set(s.id, s));
                 return Array.from(unique.values());
             });
         } catch (e: any) {
             console.error("AI Scenario Gen Failed", e);
+        } finally {
+            setBackgroundTask(null);
         }
-        
-        setLoadingProgress(100);
-        setTimeout(() => {
-            setIsLoading(false);
-            // Trigger additional deep update after main load
-            performDeepUpdate();
-        }, 500);
     };
 
     const handleViewChange = useCallback((center: { lat: number, lng: number, zoom: number }) => {
