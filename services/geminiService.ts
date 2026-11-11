@@ -1269,11 +1269,11 @@ export const analyzeAssetRisks = async (asset: InfrastructureAsset, region: stri
     if (!aiClient) return "AI analysis needs a Gemini key. Click \"AI: Off\" in the top bar to add your free key.";
     
     const prompt = `Analyze the strategic importance and risks for: Asset: ${asset.name} Type: ${asset.typeId} Region: ${region}. 
-    Provide a concise 3 bullet point summary of: 
-    1. Grid Criticality 
-    2. Vulnerabilities 
-    3. Economic Impact. 
-    ADDITIONALLY, based on region and asset type, estimate the likely supplier(s) for its OT/SCADA/DCS systems (e.g. Siemens, GE, Schneider, ABB) with a probability (High/Med/Low).`;
+    Using publicly available sources only, provide a concise 3 bullet point summary of:
+    1. Grid criticality (its role in the system, capacity, what depends on it)
+    2. General vulnerabilities typical of this TYPE of asset (physical, weather, cyber) - do not speculate about this specific site's security, suppliers or control systems
+    3. Economic and customer impact if it were unavailable
+    Cite figures only if they come from a source you found, and name the source. If you are unsure, say so.`;
     
     try {
         const response = await aiClient.models.generateContent({
@@ -1370,6 +1370,7 @@ LIVE DATA FROM THE APP (fetched in the last few minutes - treat as current):
 - Generation mix: ${context.generationMix || 'unknown'}
 - Assets on the map: ${context.assetCount}
 - Power station / interconnector outages (Elexon REMIT, live): ${context.generatorOutages || 'none loaded'}
+- ${context.liveSystems || 'Other live system data not loaded'}
 - Live power cuts shown (${context.outageCount}): ${context.activeOutages || 'none'}
 - Live power-cut sources connected: UK Power Networks, Northern Powergrid${OUTAGE_WORKER_URL ? ', plus ' + (workerSourceStatus.filter(x => x.ok).map(x => x.name).join(', ') || 'none of NGED/SSEN/SPEN/ENWL yet') : ''}. Areas without a connected feed may still have power cuts.
 

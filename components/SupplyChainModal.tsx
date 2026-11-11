@@ -25,7 +25,8 @@ const SupplyChainModal: React.FC<SupplyChainModalProps> = ({ onClose, insights, 
                             <Cog6ToothIcon className="w-6 h-6 text-indigo-500" />
                             OT Supply Chain Analysis
                         </h3>
-                        <p className="text-sm text-slate-400 mt-1">Deep analysis of Industrial Automation suppliers for {regionName}.</p>
+                        <p className="text-sm text-slate-400 mt-1">Publicly reported relationships between OT/automation suppliers and energy companies in {regionName}.</p>
+                        <p className="text-[11px] text-amber-400/80 mt-1">AI-generated from public web search (Google Gemini). Unverified - check each source before relying on it.</p>
                     </div>
                     <button onClick={onClose} className="p-2 hover:bg-slate-800 rounded-lg transition-colors group">
                         <XMarkIcon className="w-6 h-6 text-slate-500 group-hover:text-white" />

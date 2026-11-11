@@ -11,6 +11,10 @@ By Stuart Okin, Director of Cyber Regulation and Emerging Technologies, Ofgem. A
 - **Live power cuts** from UK Power Networks (London, South East, East) and Northern Powergrid (North East, Yorkshire), from their open data
 - **DNO licence areas** with their real boundaries (NESO open data)
 - **Power station and interconnector outages** live from Elexon REMIT notices (amber diamonds = unplanned, grey = planned; size = MW unavailable)
+- **Live Systems panel**: interconnector flows, generator outages, gas system (demand, supply, linepack), Met Office weather warnings and Environment Agency flood warnings, refreshed every 5 minutes
+- **Interconnector flows** on the map at each GB landing point (green = importing, orange = exporting)
+- **Regional carbon intensity and generation mix** in each DNO area's popup (NESO)
+- **Flood warnings** (England) and **weather warnings** as map layers
 - **Weather radar** (RainViewer)
 - **Built-in scenarios** with a day-by-day timeline of customers off supply, cost and restoration
 - **Place search** (OpenStreetMap)
@@ -108,6 +112,8 @@ UK Power Networks and Northern Powergrid work straight away. The other DNOs' fee
 2. On each, go to your account → **API keys** → create a key. Request access to the outage dataset if asked.
 3. In Cloudflare, open the Worker → **Settings → Variables and Secrets → Add**, type **Secret**, name `SPEN_API_KEY` (and `ENWL_API_KEY`), paste the key, **Deploy**.
 
+The Worker also serves `/gas` (National Gas) and `/warnings` (Met Office), which browsers can't read directly. Whenever `worker/outages-worker.js` changes, paste the new version into Cloudflare (**Edit code** → paste → **Deploy**).
+
 The keys stay in Cloudflare and never appear in this repo or the website. Check ENWL's licence terms before showing its data publicly. The Worker caches results for 2 minutes, so the DNOs are asked at most once every 2 minutes however many people visit. Cloudflare's free plan allows 100,000 requests a day.
 
 ## Running it on your own computer (optional)
@@ -133,6 +139,11 @@ Then open http://localhost:3000.
 | [Elexon REMIT](https://bmrs.elexon.co.uk/remit) | Power station / interconnector outages | No |
 | [OSUKED Power Station Dictionary](https://github.com/OSUKED/Power-Station-Dictionary) | Where each power station unit is (MIT licence) | No |
 | [NESO DNO licence areas](https://www.neso.energy/data-portal/gis-boundaries-gb-dno-license-areas) | DNO boundaries | No |
+| [Elexon generation by fuel](https://bmrs.elexon.co.uk/generation-by-fuel-type) | Interconnector flows | No |
+| [NESO Carbon Intensity (regional)](https://carbonintensity.org.uk) | Carbon intensity and mix by DNO area | No |
+| [Environment Agency flood monitoring](https://environment.data.gov.uk/flood-monitoring/doc/reference) | Flood warnings (England only) | No |
+| [National Gas Data Portal](https://data.nationalgas.com) | Gas demand, supply, linepack (via Worker) | No |
+| [Met Office warnings](https://www.metoffice.gov.uk/weather/warnings-and-advice/uk-warnings) | Weather warnings (via Worker) | No |
 | [Esri World Dark Gray Canvas](https://www.arcgis.com/home/item.html?id=358ec1e175ea41c3bf5c68f0da11ae2b) | Map tiles | No |
 | [RainViewer](https://www.rainviewer.com/api.html) | Weather radar | No |
 | [Google Gemini](https://ai.google.dev) | AI features | Visitor's own key |
@@ -142,5 +153,7 @@ Then open http://localhost:3000.
 Querying OpenStreetMap for the whole of GB is slow and the free public servers are often busy. So each time the site is published (and every Monday), GitHub Actions runs `scripts/build-osm-snapshot.mjs`, which downloads power stations, high-voltage lines, interconnectors and subsea pipelines once and saves them as `data/osm-uk.json` alongside the site. The same step downloads NESO's DNO licence-area boundaries, converts them from British National Grid to latitude/longitude, simplifies them and saves `data/dno-areas.json`. It also saves `data/bmu-locations.json`, a lookup of where each power station unit is, so Elexon's outage notices (which have no map coordinates) can be placed. Units not in the lookup, usually very new stations, are left off the map. Visitors load that file instantly. If the snapshot can't be built, the site still works and tries OpenStreetMap live instead.
 
 Power cuts shown are real: from UK Power Networks' and Northern Powergrid's live feeds, plus (if you add a Gemini key) incidents found by AI web search, which are labelled "unverified". Areas whose DNO feed isn't connected (see the system status panel) may still have power cuts.
+
+AI features use Google Gemini with Google Search. Their output is labelled in the app as unverified web-search results; the asset summary deliberately does not speculate about specific sites' suppliers or control systems.
 
 Scenario timelines and impacts are illustrative models, not forecasts. Where a live feed is unavailable, the app falls back to estimated values and records that in the system log.

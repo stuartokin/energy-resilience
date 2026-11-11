@@ -11,6 +11,10 @@
 //
 // UK Power Networks and Northern Powergrid are fetched by the website directly.
 //
+// It also serves two other feeds that browsers can't read directly:
+//   /gas       - National Gas: live NTS demand, supply and linepack
+//   /warnings  - Met Office: current UK weather warnings
+//
 // Setup: paste this whole file into a new Cloudflare Worker and deploy.
 // Optional secrets (Worker > Settings > Variables and Secrets > Add > Secret):
 //   SPEN_API_KEY, ENWL_API_KEY
@@ -35,16 +39,23 @@ export default {
         if (request.method === 'OPTIONS') return new Response(null, { headers: cors });
 
         const url = new URL(request.url);
-        if (url.pathname !== '/' && url.pathname !== '/outages') {
-            return new Response('Not found', { status: 404, headers: cors });
-        }
+        const routes = {
+            '/': () => collectAll(env),
+            '/outages': () => collectAll(env),
+            '/gas': () => fetchGas(),
+            '/warnings': () => fetchMetWarnings(),
+        };
+        const route = routes[url.pathname];
+        if (!route) return new Response('Not found', { status: 404, headers: cors });
 
-        // Shared cache so many visitors cause at most one fetch per DNO every 2 minutes.
+        // Shared cache so many visitors cause at most one fetch per source every 2 minutes.
         const cache = caches.default;
-        const cacheKey = new Request(new URL('/outages-cache-v1', url).toString());
+        const cacheKey = new Request(new URL(`/cache-v2${url.pathname === '/' ? '/outages' : url.pathname}`, url).toString());
         let cached = await cache.match(cacheKey);
         if (!cached) {
-            const body = JSON.stringify(await collectAll(env));
+            let body;
+            try { body = JSON.stringify(await route()); }
+            catch (e) { body = JSON.stringify({ error: String(e.message || e).slice(0, 200) }); }
             cached = new Response(body, {
                 headers: { 'Content-Type': 'application/json', 'Cache-Control': `public, max-age=${CACHE_SECONDS}` },
             });
@@ -55,6 +66,63 @@ export default {
         return res;
     },
 };
+
+// ---------- National Gas: live NTS flows (mcm/day) and linepack (mcm) ----------
+async function fetchGas() {
+    const ids = '591,558,601,602,585,586,583,603,584,587,588';
+    const day = new Date().toISOString().slice(0, 10);
+    const res = await fetch('https://data.nationalgas.com/api/customisable-downloads-download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'User-Agent': 'energy-resilience-worker' },
+        body: JSON.stringify({ ids, fromDate: day, toDate: day, isLatest: true, predefinedDate: 'Latest Update', type: 'CSV' }),
+    });
+    if (!res.ok) throw new Error(`National Gas HTTP ${res.status}`);
+    const rows = parseCsv(await res.text());
+    // Keep the most recent reading for each measure. Timestamps are "dd/mm/yyyy hh:mm:ss" (UK time).
+    const ts = v => { const m = String(v || '').match(/(\d+)\/(\d+)\/(\d+) (\d+):(\d+)/); return m ? Date.UTC(+m[3], +m[2] - 1, +m[1], +m[4], +m[5]) : 0; };
+    const latest = {};
+    for (const r of rows) {
+        const name = r['System Entry Name'];
+        if (!name) continue;
+        const t = ts(r['Timestamp']);
+        if (!latest[name] || t > latest[name].t) latest[name] = { t, value: parseFloat(r['Value']), time: r['Timestamp'] };
+    }
+    const pick = n => latest[n] ? Math.round(latest[n].value * 10) / 10 : null;
+    return {
+        generated: new Date().toISOString(),
+        units: 'mcm/d (flows), mcm (linepack)',
+        asAt: latest['NTS Demand Flow']?.time || null,
+        ntsDemand: pick('NTS Demand Flow'),
+        totalSupply: pick('TOTAL SUPPLY'),
+        linepack: pick('NTS Actual Linepack'),
+        ldzDemand: pick('LDZ Offtake Flow'),
+        powerStations: pick('Power Station Demand Flow'),
+        industrial: pick('Industrial Demand Flow'),
+        storageInjection: pick('Storage Demand Flow'),
+        exports: pick('Interconnector Export Demand Flow'),
+    };
+}
+
+// ---------- Met Office: current UK weather warnings (RSS) ----------
+async function fetchMetWarnings() {
+    const res = await fetch('https://www.metoffice.gov.uk/public/data/PWSCache/WarningsRSS/Region/UK', {
+        headers: { 'User-Agent': 'energy-resilience-worker' },
+    });
+    if (!res.ok) throw new Error(`Met Office HTTP ${res.status}`);
+    const xml = await res.text();
+    const tag = (s, t) => { const m = s.match(new RegExp(`<${t}[^>]*>([\\s\\S]*?)</${t}>`)); return m ? m[1].replace(/<!\[CDATA\[|\]\]>/g, '').trim() : ''; };
+    const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].map(m => m[1]);
+    return {
+        generated: new Date().toISOString(),
+        warnings: items.map(it => {
+            const title = tag(it, 'title');
+            const level = (title.match(/^(Yellow|Amber|Red)/i) || [])[1] || 'Yellow';
+            const type = (title.match(/warning of (.+?) affecting/i) || [])[1] || '';
+            const region = (title.match(/affecting (.+)$/i) || [])[1] || '';
+            return { title, level, type, region, description: tag(it, 'description'), link: tag(it, 'link'), published: tag(it, 'pubDate') };
+        }),
+    };
+}
 
 async function collectAll(env) {
     const sources = [

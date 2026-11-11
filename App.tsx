@@ -28,6 +28,8 @@ import DraggablePanel from './components/DraggablePanel';
 import GenerationListPanel from './components/GenerationListPanel';
 import GridHistoryModal from './components/GridHistoryModal';
 import AiKeyModal from './components/AiKeyModal';
+import LiveSystemsPanel from './components/LiveSystemsPanel';
+import { fetchInterconnectorFlows, fetchRegionalCarbon, fetchFloodWarnings, fetchGasSnapshot, fetchWeatherWarnings, InterconnectorFlow, RegionalCarbon, FloodWarning, GasSnapshot, WeatherWarning } from './services/liveSystems';
 import { hasAiKey, onAiKeyChange, onAiKeyRequired } from './services/aiKey';
 
 import { 
@@ -112,7 +114,8 @@ const PANEL_CONFIG: Record<string, { title: string, abbr: string, icon: any }> =
     'chat': { title: 'Analyst AI', abbr: 'Analyst', icon: ChatBubbleLeftRightIcon },
     'supply_chain': { title: 'Supply Chain', abbr: 'Supply', icon: TruckIcon },
     'reporting': { title: 'Reporting', abbr: 'Report', icon: PrinterIcon },
-    'reset_view': { title: 'View Control', abbr: 'View', icon: StopCircleIcon }
+    'reset_view': { title: 'View Control', abbr: 'View', icon: StopCircleIcon },
+    'live_systems': { title: 'Live Systems', abbr: 'Live', icon: SignalIcon }
 };
 
 const PinnedItem = ({ id, onUnpin }: { id: string, onUnpin: (id: string, x?: number, y?: number) => void }) => {
@@ -146,6 +149,29 @@ export const App: React.FC = () => {
     const [assets, setAssets] = useState<InfrastructureAsset[]>(UK_ASSETS_SEED);
     const [scenarios, setScenarios] = useState<RiskScenario[]>(INITIAL_SCENARIOS);
     const [liveOutages, setLiveOutages] = useState<OutageEvent[]>([]);
+    // Live system feeds (interconnectors, regional carbon, floods, gas, weather), refreshed every 5 minutes
+    const [icFlows, setIcFlows] = useState<InterconnectorFlow[]>([]);
+    const [regionalCarbon, setRegionalCarbon] = useState<Record<string, RegionalCarbon>>({});
+    const [floods, setFloods] = useState<{ warnings: FloodWarning[], alerts: number } | null>(null);
+    const [gas, setGas] = useState<GasSnapshot | null>(null);
+    const [weatherWarnings, setWeatherWarnings] = useState<WeatherWarning[]>([]);
+    const [liveSystemsUpdated, setLiveSystemsUpdated] = useState<Date | null>(null);
+    useEffect(() => {
+        const load = async () => {
+            await Promise.allSettled([
+                fetchInterconnectorFlows().then(setIcFlows),
+                fetchRegionalCarbon().then(setRegionalCarbon),
+                fetchFloodWarnings().then(setFloods),
+                fetchGasSnapshot().then(setGas),
+                fetchWeatherWarnings().then(setWeatherWarnings),
+            ]);
+            setLiveSystemsUpdated(new Date());
+        };
+        load();
+        const id = setInterval(load, 300000);
+        return () => clearInterval(id);
+    }, []);
+
     // Power station / interconnector outages from Elexon REMIT, refreshed every 5 minutes
     const [generatorOutages, setGeneratorOutages] = useState<GeneratorOutage[]>([]);
     useEffect(() => {
@@ -184,7 +210,7 @@ export const App: React.FC = () => {
     
     // UI Interactions
     const [selectedAsset, setSelectedAsset] = useState<InfrastructureAsset | null>(null);
-    const [visibleLayers, setVisibleLayers] = useState<Set<string>>(new Set(['Generation', 'Transmission', 'Interconnector', 'Distribution', 'Retail', 'DNO Regions', 'Generator Outages']));
+    const [visibleLayers, setVisibleLayers] = useState<Set<string>>(new Set(['Generation', 'Transmission', 'Interconnector', 'Distribution', 'Retail', 'DNO Regions', 'Generator Outages', 'Flood Warnings', 'Weather Warnings', 'Interconnector Flows']));
     const [selectedPointInfo, setSelectedPointInfo] = useState<TimelineStep | null>(null);
     const [mapCenterOverride, setMapCenterOverride] = useState<{lat: number, lng: number, zoom: number} | null>(null);
     const [customAssetQuery, setCustomAssetQuery] = useState("");
@@ -749,7 +775,7 @@ export const App: React.FC = () => {
         setIsPlaying(false);
         setTimeline([]);
         setChartMode('normal');
-        setVisibleLayers(new Set(['Generation', 'Transmission', 'Interconnector', 'Distribution', 'Retail', 'DNO Regions', 'Generator Outages']));
+        setVisibleLayers(new Set(['Generation', 'Transmission', 'Interconnector', 'Distribution', 'Retail', 'DNO Regions', 'Generator Outages', 'Flood Warnings', 'Weather Warnings', 'Interconnector Flows']));
         setActiveRegion(prev => ({...prev}));
         setMapCenterOverride({ lat: activeRegion.lat, lng: activeRegion.lng, zoom: activeRegion.zoom });
         setMinimizedPanels(new Set(INITIAL_MINIMIZED));
@@ -1354,6 +1380,10 @@ export const App: React.FC = () => {
                             viewOverride={mapCenterOverride}
                             isScenarioComplete={isScenarioComplete}
                             generatorOutages={generatorOutages}
+                            interconnectorFlows={icFlows}
+                            regionalCarbon={regionalCarbon}
+                            floodWarnings={floods?.warnings || []}
+                            weatherWarnings={weatherWarnings}
                         />
                     </div>
                     
@@ -1457,6 +1487,27 @@ export const App: React.FC = () => {
                                             Generator Outages
                                         </button>
 
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); toggleLayer('Interconnector Flows'); }}
+                                            className={`w-full flex items-center gap-2 px-2 py-1 rounded text-[10px] font-bold transition-all ${visibleLayers.has('Interconnector Flows') ? 'bg-slate-800 text-white' : 'text-slate-500 opacity-50'}`}
+                                        >
+                                            <div className="w-2 h-2 rounded-full bg-green-400"></div>
+                                            Interconnector Flows
+                                        </button>
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); toggleLayer('Flood Warnings'); }}
+                                            className={`w-full flex items-center gap-2 px-2 py-1 rounded text-[10px] font-bold transition-all ${visibleLayers.has('Flood Warnings') ? 'bg-slate-800 text-white' : 'text-slate-500 opacity-50'}`}
+                                        >
+                                            <div className="w-2 h-2 bg-blue-500"></div>
+                                            Flood Warnings
+                                        </button>
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); toggleLayer('Weather Warnings'); }}
+                                            className={`w-full flex items-center gap-2 px-2 py-1 rounded text-[10px] font-bold transition-all ${visibleLayers.has('Weather Warnings') ? 'bg-slate-800 text-white' : 'text-slate-500 opacity-50'}`}
+                                        >
+                                            <div className="w-0 h-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-b-[7px] border-b-yellow-400"></div>
+                                            Weather Warnings
+                                        </button>
                                         {/* Weather Radar Toggle */}
                                         <button 
                                             onClick={(e) => { e.stopPropagation(); toggleLayer('Weather Radar'); }}
@@ -1690,6 +1741,27 @@ export const App: React.FC = () => {
                                         Last Updated: {lastOutageCheck.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                                     </p>
                                 </div>
+                            </div>
+                        </DraggablePanel>
+                    )}
+
+                    {/* Live Systems Panel (Right) */}
+                    {!minimizedPanels.has('live_systems') && !pinnedPanels.has('live_systems') && (
+                        <DraggablePanel
+                            key={`live_systems_${layoutKey}`}
+                            initialX={panelPositions['live_systems']?.x ?? (window.innerWidth - 300)}
+                            initialY={panelPositions['live_systems']?.y ?? 80}
+                            className="w-64"
+                            zIndex={getZIndex('live_systems')}
+                            onInteract={() => bringToFront('live_systems')}
+                        >
+                            <div className="relative bg-slate-900/90 backdrop-blur border border-slate-700 p-3 rounded-lg shadow-xl pointer-events-auto">
+                                <div className="absolute top-1 right-1 z-20 flex gap-1">
+                                    <button onClick={() => pinPanel('live_systems')} className="p-1 bg-slate-900/50 rounded hover:bg-slate-800 text-slate-400 hover:text-cyan-400" title="Pin"><MapPinIcon className="w-3 h-3" /></button>
+                                    <button onClick={() => toggleMinimize('live_systems')} className="p-1 bg-slate-900/50 rounded hover:bg-slate-800 text-slate-400 hover:text-white"><MinusIcon className="w-3 h-3" /></button>
+                                </div>
+                                <h3 className="text-[10px] font-bold text-white uppercase tracking-widest mb-2 flex items-center gap-1"><SignalIcon className="w-3 h-3 text-cyan-400" /> Live Systems</h3>
+                                <LiveSystemsPanel flows={icFlows} gas={gas} weather={weatherWarnings} floods={floods} generatorOutages={generatorOutages} updated={liveSystemsUpdated} />
                             </div>
                         </DraggablePanel>
                     )}
@@ -1946,6 +2018,13 @@ export const App: React.FC = () => {
                                     outages={[...liveOutages, ...(showHistorical ? historicalOutages : [])]}
                                     onMapAction={handleMapAction}
                                     generationMix={generationMix}
+                                    liveSystemsSummary={[
+                                        icFlows.length ? `Interconnector flows (MW, +import/-export): ${icFlows.map(f => `${f.name} ${f.mw}`).join(', ')}` : '',
+                                        gas ? `Gas NTS: demand ${gas.ntsDemand} mcm/d, supply ${gas.totalSupply} mcm/d, linepack ${gas.linepack} mcm, to power stations ${gas.powerStations} mcm/d` : '',
+                                        `Met Office warnings: ${weatherWarnings.length ? weatherWarnings.map(w => `${w.level} ${w.type} - ${w.region}`).join('; ') : 'none'}`,
+                                        floods ? `EA flood warnings (England): ${floods.warnings.length} warnings (${floods.warnings.filter(w => w.level === 1).length} severe), ${floods.alerts} alerts${floods.warnings.length ? ': ' + floods.warnings.slice(0, 8).map(w => w.area).join('; ') : ''}` : '',
+                                        Object.keys(regionalCarbon).length ? `Regional carbon intensity (gCO2/kWh): ${Object.entries(regionalCarbon).map(([k, v]) => `${k} ${v.intensity}`).join(', ')}` : '',
+                                    ].filter(Boolean).join('\n- ')}
                                     generatorOutagesSummary={generatorOutages.length ? `${generatorOutages.length} active notices, ${Math.round(generatorOutages.reduce((a, g) => a + g.unavailableMW, 0))} MW unavailable in total (${Math.round(generatorOutages.filter(g => !g.planned).reduce((a, g) => a + g.unavailableMW, 0))} MW unplanned). Largest: ${generatorOutages.slice(0, 8).map(g => `${g.siteName || g.unit} ${g.unit} ${g.fuelType} ${Math.round(g.unavailableMW)}MW ${g.planned ? 'planned' : 'UNPLANNED'} (${g.cause})`).join('; ')}` : ''}
                                     timelineNow={activeScenarios.length > 0 && timeline[currentDay] ? `day ${currentDay}: ${timeline[currentDay].consumersOffline.toLocaleString()} customers off supply, ${timeline[currentDay].restorationPct}% restored, est. cost £${timeline[currentDay].costMillions}m` : ''}
                                 />
@@ -1991,6 +2070,11 @@ export const App: React.FC = () => {
                             {minimizedPanels.has('scenarios_pane') && (
                                 <button onClick={() => restorePanel('scenarios_pane')} className="p-2 hover:bg-slate-800 rounded text-red-400 hover:text-white" title="Scenarios">
                                     <PlayIcon className="w-6 h-6" />
+                                </button>
+                            )}
+                            {minimizedPanels.has('live_systems') && (
+                                <button onClick={() => restorePanel('live_systems')} className="p-2 hover:bg-slate-800 rounded text-cyan-400 hover:text-white" title="Live Systems">
+                                    <SignalIcon className="w-6 h-6" />
                                 </button>
                             )}
                              {minimizedPanels.has('grid_status') && (

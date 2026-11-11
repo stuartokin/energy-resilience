@@ -3,6 +3,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { InfrastructureAsset, RegionConfig, RiskScenario, OutageEvent, DNORegion, AssetType, GeneratorOutage } from '../types';
 import { ASSET_TYPES } from '../constants';
+import { InterconnectorFlow, RegionalCarbon, FloodWarning, WeatherWarning } from '../services/liveSystems';
 import { PlusIcon, MinusIcon, ExclamationTriangleIcon } from '@heroicons/react/24/solid';
 
 interface MapProps {
@@ -21,6 +22,10 @@ interface MapProps {
     viewOverride?: { lat: number, lng: number, zoom: number } | null;
     isScenarioComplete?: boolean;
     generatorOutages?: GeneratorOutage[];
+    interconnectorFlows?: InterconnectorFlow[];
+    regionalCarbon?: Record<string, RegionalCarbon>;
+    floodWarnings?: FloodWarning[];
+    weatherWarnings?: WeatherWarning[];
 }
 
 const getVoltageColor = (tags: any) => {
@@ -90,7 +95,8 @@ const OUTAGE_ICON = L.divIcon({
 
 const MapVisualization: React.FC<MapProps> = ({ 
     region, assets, outages, historicalOutages = [], activeScenarios, dnoRegions = [], day, filters, 
-    onAssetSelect, onViewChange, currentImpact = 0, peakImpact = 1, viewOverride, isScenarioComplete, generatorOutages = []
+    onAssetSelect, onViewChange, currentImpact = 0, peakImpact = 1, viewOverride, isScenarioComplete, generatorOutages = [],
+    interconnectorFlows = [], regionalCarbon = {}, floodWarnings = [], weatherWarnings = []
 }) => {
     const mapContainerRef = useRef<HTMLDivElement>(null);
     const [noLocationWarning, setNoLocationWarning] = useState(false);
@@ -103,6 +109,7 @@ const MapVisualization: React.FC<MapProps> = ({
     const assetLinesRef = useRef<Map<string, L.Polyline>>(new Map());
     const outageLayerRef = useRef<L.LayerGroup | null>(null);
     const genOutageLayerRef = useRef<L.LayerGroup | null>(null);
+    const liveLayerRef = useRef<L.LayerGroup | null>(null);
     const dnoLayerRef = useRef<L.LayerGroup | null>(null);
     const weatherLayerRef = useRef<L.TileLayer | null>(null);
     const impactCirclesRef = useRef<L.Circle[]>([]);
@@ -158,6 +165,7 @@ const MapVisualization: React.FC<MapProps> = ({
         L.tileLayer(LABELS_URL, { pane: 'labels', maxNativeZoom: 16, maxZoom: 19, opacity: 0.7 }).addTo(map);
         outageLayerRef.current = L.layerGroup().addTo(map);
         genOutageLayerRef.current = L.layerGroup().addTo(map);
+        liveLayerRef.current = L.layerGroup().addTo(map);
         dnoLayerRef.current = L.layerGroup().addTo(map);
 
         map.on('moveend', () => {
@@ -299,12 +307,17 @@ const MapVisualization: React.FC<MapProps> = ({
                 const polygon = L.polygon(latlngs, {
                     color: dno.color, opacity: 0.8, weight: 1.5, fillColor: dno.color, fillOpacity: 0.12
                 });
-                polygon.bindPopup(`<div style="padding:10px 12px"><b>${esc(dno.name)}</b><br><span style="color:#94a3b8">${esc(dno.operator)}</span></div>`);
+                const ci = regionalCarbon[dno.name];
+                const ciHtml = ci ? `<div style="margin-top:6px;border-top:1px solid #334155;padding-top:6px">
+                    <div>Carbon intensity: <b>${ci.intensity} gCO2/kWh</b> (${esc(ci.index)})</div>
+                    <div style="color:#94a3b8;font-size:11px">Local mix: ${ci.mix.slice(0, 4).map(m => `${esc(m.fuel)} ${m.perc}%`).join(', ')}</div>
+                    <div style="color:#64748b;font-size:9px;margin-top:2px">Source: NESO Carbon Intensity API (live forecast)</div></div>` : '';
+                polygon.bindPopup(`<div style="padding:10px 12px;min-width:220px"><b>${esc(dno.name)}</b><br><span style="color:#94a3b8">${esc(dno.operator)}</span>${ciHtml}</div>`);
                 polygon.addTo(dnoLayer);
                 polygon.bringToBack();
             });
         }
-    }, [assets, filters, dnoRegions, isMapReady]);
+    }, [assets, filters, dnoRegions, isMapReady, regionalCarbon]);
 
     // --- Swap dot/icon style when zoom crosses threshold ---
     useEffect(() => {
@@ -468,6 +481,57 @@ const MapVisualization: React.FC<MapProps> = ({
                 .addTo(layer);
         });
     }, [generatorOutages, filters, isMapReady]);
+
+    // --- LIVE SYSTEMS: interconnector flows, flood warnings, weather warnings ---
+    useEffect(() => {
+        const layer = liveLayerRef.current;
+        if (!layer || !isMapReady) return;
+        layer.clearLayers();
+
+        if (filters.has('Interconnector Flows')) {
+            interconnectorFlows.forEach(f => {
+                const importing = f.mw > 0, exporting = f.mw < 0;
+                const colour = importing ? '#4ade80' : exporting ? '#fb923c' : '#64748b';
+                const label = `${f.name} ${importing ? '&darr;' : exporting ? '&uarr;' : ''}${Math.abs(f.mw)} MW`;
+                L.marker([f.lat, f.lng], {
+                    icon: L.divIcon({
+                        html: `<div style="white-space:nowrap;background:rgba(15,23,42,0.85);border:1px solid ${colour};color:${colour};font-size:10px;font-weight:bold;padding:1px 5px;border-radius:4px;transform:translate(8px,-50%)">${label}</div>`,
+                        className: 'asset-icon', iconSize: [0, 0]
+                    }),
+                    interactive: true, zIndexOffset: 1200
+                }).bindPopup(`<div style="padding:10px 12px"><b>${esc(f.name)}</b> (to ${esc(f.country)})<br>${importing ? 'Importing' : exporting ? 'Exporting' : 'No flow'}: <b>${Math.abs(f.mw)} MW</b> of ${f.capacityMW} MW<div style="color:#64748b;font-size:9px;margin-top:4px">Source: Elexon (live, 5-minute)</div></div>`).addTo(layer);
+            });
+        }
+
+        if (filters.has('Flood Warnings')) {
+            floodWarnings.forEach(w => {
+                if (typeof w.lat !== 'number' || typeof w.lng !== 'number') return;
+                const severe = w.level === 1;
+                L.marker([w.lat, w.lng], {
+                    icon: L.divIcon({
+                        html: `<div style="width:14px;height:14px;background:${severe ? '#dc2626' : '#2563eb'};border:2px solid #fff;border-radius:2px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:9px;font-weight:bold">~</div>`,
+                        className: 'asset-icon', iconSize: [14, 14], iconAnchor: [7, 7]
+                    }),
+                    zIndexOffset: 1800, title: `${w.severity}: ${w.area}`
+                }).bindPopup(`<div style="padding:10px 12px;max-width:260px"><b style="color:${severe ? '#f87171' : '#93c5fd'}">${esc(w.severity)}</b><br><b>${esc(w.area)}</b>${w.county ? `<br><span style="color:#94a3b8">${esc(w.county)}</span>` : ''}<div style="font-size:11px;margin-top:4px">${esc(w.message)}</div><div style="color:#64748b;font-size:9px;margin-top:4px">Source: Environment Agency (live)</div></div>`).addTo(layer);
+            });
+        }
+
+        if (filters.has('Weather Warnings')) {
+            const colours: Record<string, string> = { Red: '#dc2626', Amber: '#f59e0b', Yellow: '#facc15' };
+            weatherWarnings.forEach((w, i) => {
+                if (typeof w.lat !== 'number' || typeof w.lng !== 'number') return;
+                const c = colours[w.level] || '#facc15';
+                L.marker([w.lat + (i % 3) * 0.15, w.lng + (i % 3) * 0.15], {
+                    icon: L.divIcon({
+                        html: `<div style="width:0;height:0;border-left:11px solid transparent;border-right:11px solid transparent;border-bottom:19px solid ${c};filter:drop-shadow(0 0 3px #000)"></div><div style="position:absolute;top:5px;left:9px;font-size:11px;font-weight:bold;color:#000">!</div>`,
+                        className: 'asset-icon', iconSize: [22, 19], iconAnchor: [11, 10]
+                    }),
+                    zIndexOffset: 1900, title: w.title
+                }).bindPopup(`<div style="padding:10px 12px;max-width:280px"><b>${esc(w.title)}</b><div style="font-size:11px;margin-top:4px">${esc(w.description)}</div>${w.link ? `<a href="${esc(w.link)}" target="_blank" rel="noopener" style="color:#67e8f9;font-size:11px">Met Office details</a>` : ''}<div style="color:#64748b;font-size:9px;margin-top:4px">Source: Met Office. Marker shows the region, not the exact area.</div></div>`).addTo(layer);
+            });
+        }
+    }, [interconnectorFlows, floodWarnings, weatherWarnings, filters, isMapReady]);
 
     const handleZoomIn = () => { mapRef.current?.zoomIn(); };
     const handleZoomOut = () => { mapRef.current?.zoomOut(); };
