@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 1'   # every Monday 03:17 UTC: refresh the OpenStreetMap snapshot
 
 permissions:
   contents: read
@@ -23,6 +25,10 @@ jobs:
         with:
           node-version: 20
       - run: npm install
+      - name: Build OpenStreetMap infrastructure snapshot
+        run: node scripts/build-osm-snapshot.mjs
+        continue-on-error: true
+        timeout-minutes: 20
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:
