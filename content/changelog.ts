@@ -6,6 +6,17 @@ export interface ChangeEntry { version: string; date: string; title: string; cha
 
 export const CHANGELOG: ChangeEntry[] = [
     {
+        version: '3.3.2',
+        date: '2026-11-12',
+        title: 'Offshore links back at national zoom; tidier start-up layout',
+        changes: [
+            'Interconnectors, subsea and offshore wind export cables (OFTOs) and gas pipelines show again when zoomed out, including links out to sea and to other countries.',
+            'Map tiles now include subsea cables from national zoom and gas pipelines from zoom 4.',
+            'Start-up layout: Regional Network and Live Outages on every screen; Live Systems as well on large screens (1600 px and wider). Data Sync starts minimised.',
+            'The UK is fitted into the space between the open panels, and the tool dock now starts bottom-left so it doesn\'t cover the south of England.',
+        ],
+    },
+    {
         version: '3.3.1',
         date: '2026-11-12',
         title: 'Fix: no more live OpenStreetMap queries when the map tiles are available',

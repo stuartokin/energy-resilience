@@ -87,6 +87,14 @@ const circlePolygon = (lat: number, lng: number, radiusM: number) => {
     return { type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [pts] } };
 };
 
+// Fit the UK between the open panels (left: Regional Network / Outages; right: Live Systems on large screens)
+const UK_BOUNDS: [[number, number], [number, number]] = [[-8.2, 49.9], [1.8, 60.8]];
+const ukPadding = () => {
+    const w = window.innerWidth;
+    if (w < 640) return { top: 20, bottom: 70, left: 10, right: 10 };
+    return { top: 30, bottom: 40, left: w >= 1024 ? 280 : 230, right: w >= 1600 ? 300 : 60 };
+};
+
 const emptyFC = { type: 'FeatureCollection', features: [] as any[] };
 
 const popupHtml = (title: string, rows: [string, any][], source: string) =>
@@ -227,7 +235,7 @@ const MapVisualization: React.FC<MapProps> = ({
         map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
         mapRef.current = map;
         (window as any).__energyMap = map; // handy for debugging in the browser console
-        if (region.id === 'UK') map.fitBounds([[-8.2, 49.9], [1.8, 60.8]], { padding: 20, duration: 0 });
+        if (region.id === 'UK') map.fitBounds(UK_BOUNDS, { padding: ukPadding(), duration: 0 });
 
         map.on('error', (e: any) => { console.warn('Map:', e?.error?.message || e); if (String(e?.error?.message || e?.error?.url || '').includes('arcgisonline')) markFail('basemap', 'tiles failed'); });
         map.on('sourcedata', (e: any) => { if (e.sourceId === 'base' && e.isSourceLoaded) markOk('basemap'); });
@@ -251,6 +259,12 @@ const MapVisualization: React.FC<MapProps> = ({
             map.addSource('asset-lines', { type: 'geojson', data: emptyFC as any });
             map.addLayer({ id: 'asset-lines', type: 'line', source: 'asset-lines', filter: ['!', ['to-boolean', ['get', 'dashed']]], paint: { 'line-color': ['get', 'color'], 'line-width': ['case', ['to-boolean', ['get', 'affected']], 4, 2], 'line-opacity': 0.75 } });
             map.addLayer({ id: 'asset-lines-dashed', type: 'line', source: 'asset-lines', filter: ['to-boolean', ['get', 'dashed']], paint: { 'line-color': ['get', 'color'], 'line-width': ['case', ['to-boolean', ['get', 'affected']], 4, 2], 'line-opacity': 0.75, 'line-dasharray': [3, 2] } });
+
+            // National view: interconnectors, subsea / offshore cables and gas pipelines from the snapshot,
+            // so links out to sea and to other countries show at low zoom (the tiles take over from zoom 7).
+            map.addSource('national-links', { type: 'geojson', data: emptyFC as any });
+            map.addLayer({ id: 'national-links', type: 'line', source: 'national-links', maxzoom: 7, filter: ['!', ['to-boolean', ['get', 'dashed']]], paint: { 'line-color': ['get', 'color'], 'line-width': 1.6, 'line-opacity': 0.8 } });
+            map.addLayer({ id: 'national-links-dashed', type: 'line', source: 'national-links', maxzoom: 7, filter: ['to-boolean', ['get', 'dashed']], paint: { 'line-color': ['get', 'color'], 'line-width': 1.6, 'line-opacity': 0.85, 'line-dasharray': [3, 2] } });
 
             map.addSource('highlight', { type: 'geojson', data: emptyFC as any });
             map.addLayer({ id: 'highlight', type: 'line', source: 'highlight', paint: { 'line-color': '#ffffff', 'line-width': 5, 'line-opacity': 0.55, 'line-blur': 1 } });
@@ -335,6 +349,8 @@ const MapVisualization: React.FC<MapProps> = ({
         vis('osm-substations-fill', tx || dx);
         vis('osm-substations-icon', tx || dx);
         vis('osm-gas', tx);
+        vis('national-links', tx || filters.has('Interconnector'));
+        vis('national-links-dashed', tx || filters.has('Interconnector'));
         vis('osm-gas-sites', tx);
         vis('osm-demand', filters.has('Retail'));
         vis('dno-fill', filters.has('DNO Regions'));
@@ -349,15 +365,24 @@ const MapVisualization: React.FC<MapProps> = ({
         const timelineYear = isGrowthScenario ? (growthYear || 9999) : 9999;
         const points: any[] = [];
         const lines: any[] = [];
+        const nationalLinks: any[] = [];
         assets.forEach(a => {
             if (typeof a.lat !== 'number' || typeof a.lng !== 'number' || isNaN(a.lat) || isNaN(a.lng)) return;
             const typeDef = ASSET_TYPES.find(t => t.id === a.typeId);
             if (!typeDef || !filters.has(typeDef.category)) return;
             if (isGrowthScenario && a.commissionYear && a.commissionYear > timelineYear) return;
             const affected = affectedIds.has(a.id);
-            // When the vector tiles are available they already show the OSM snapshot assets
-            if (tilesAvailable && a.id.startsWith('op_') && !affected) return;
             const tags = (a as any).rawTags || {};
+            // When the vector tiles are available they already show the OSM snapshot assets - except that
+            // national-scale links (subsea cables, interconnectors, pipelines) are kept for the zoomed-out view.
+            if (tilesAvailable && a.id.startsWith('op_') && !affected) {
+                const isLink = (a.path || a.endLat) && (a.typeId === 'interconnector' || a.typeId === 'pipeline_gas' || tags.location === 'underwater' || tags.power === 'cable');
+                if (isLink) {
+                    const path = a.path || [{ lat: a.lat, lng: a.lng }, { lat: a.endLat!, lng: a.endLng! }];
+                    nationalLinks.push({ type: 'Feature', properties: { color: a.typeId === 'pipeline_gas' ? '#a8a29e' : (voltageColour(tags.voltage) || '#ec4899'), dashed: true }, geometry: { type: 'LineString', coordinates: path.map(p => [p.lng, p.lat]) } });
+                }
+                return;
+            }
             if (a.path || (a.endLat && a.endLng)) {
                 const path = a.path || [{ lat: a.lat, lng: a.lng }, { lat: a.endLat!, lng: a.endLng! }];
                 const colour = affected ? '#ef4444' : (voltageColour(tags.voltage) || typeDef.color);
@@ -370,6 +395,7 @@ const MapVisualization: React.FC<MapProps> = ({
         });
         (map.getSource('assets') as maplibregl.GeoJSONSource)?.setData({ type: 'FeatureCollection', features: points } as any);
         (map.getSource('asset-lines') as maplibregl.GeoJSONSource)?.setData({ type: 'FeatureCollection', features: lines } as any);
+        (map.getSource('national-links') as maplibregl.GeoJSONSource)?.setData({ type: 'FeatureCollection', features: nationalLinks } as any);
     }, [assets, filters, ready, tilesAvailable, day, activeScenarios, growthYear, isGrowthScenario]);
 
     // ---------- DNO areas ----------
@@ -512,7 +538,7 @@ const MapVisualization: React.FC<MapProps> = ({
     useEffect(() => {
         const map = mapRef.current;
         if (!map || activeScenarios.length > 0 || viewOverride) return;
-        if (region.id === 'UK') map.fitBounds([[-8.2, 49.9], [1.8, 60.8]], { padding: 20 });
+        if (region.id === 'UK') map.fitBounds(UK_BOUNDS, { padding: ukPadding() });
         else map.flyTo({ center: [region.lng, region.lat], zoom: region.zoom });
     }, [region]);
 

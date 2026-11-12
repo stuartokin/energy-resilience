@@ -241,7 +241,9 @@ export const App: React.FC = () => {
     const [layoutKey, setLayoutKey] = useState(0);
 
     // Panels that start minimized (Data Sync removed)
-    const INITIAL_MINIMIZED = new Set(['infra', 'engineering_work', 'standby_list', 'chat', 'supply_chain', 'reporting', 'reset_view', 'scenarios_pane']);
+    // Panels open at start: Regional Network and Live Outages everywhere; Live Systems too on large screens (>= 1600 px).
+    const INITIAL_MINIMIZED = new Set(['infra', 'engineering_work', 'standby_list', 'chat', 'supply_chain', 'reporting', 'reset_view', 'scenarios_pane', 'data_sync',
+        ...(window.innerWidth < 1600 ? ['live_systems'] : [])]);
     const [minimizedPanels, setMinimizedPanels] = useState<Set<string>>(new Set(INITIAL_MINIMIZED));
     
     const [showChat, setShowChat] = useState(true); // Always true, managed by minimization
@@ -1720,7 +1722,7 @@ export const App: React.FC = () => {
                         <DraggablePanel id="grid_status" title={PANEL_CONFIG['grid_status']?.title}
                             key={`grid_status_${layoutKey}`} 
                             initialX={panelPositions['grid_status']?.x ?? 16} 
-                            initialY={panelPositions['grid_status']?.y ?? 280} 
+                            initialY={panelPositions['grid_status']?.y ?? 250} 
                             className="w-48"
                             zIndex={getZIndex('grid_status')}
                             onInteract={() => bringToFront('grid_status')}
@@ -1756,8 +1758,8 @@ export const App: React.FC = () => {
                     {!minimizedPanels.has('live_systems') && !pinnedPanels.has('live_systems') && (
                         <DraggablePanel id="live_systems" title={PANEL_CONFIG['live_systems']?.title}
                             key={`live_systems_${layoutKey}`}
-                            initialX={panelPositions['live_systems']?.x ?? (window.innerWidth - 300)}
-                            initialY={panelPositions['live_systems']?.y ?? 80}
+                            initialX={panelPositions['live_systems']?.x ?? (window.innerWidth - 290)}
+                            initialY={panelPositions['live_systems']?.y ?? 70}
                             className="w-64"
                             zIndex={getZIndex('live_systems')}
                             onInteract={() => bringToFront('live_systems')}
@@ -2061,7 +2063,7 @@ export const App: React.FC = () => {
 
                     {/* Dock for Minimized Panels - REORGANIZED to grid 5 cols */}
                     {layoutMode !== 'phone' && (minimizedPanels.size > 0 || (showChat && minimizedPanels.has('chat'))) && (
-                        <DraggablePanel id="dock" title="Tools" key={`dock_${layoutKey}`} initialX={Math.round(window.innerWidth / 2 - 130)} initialY={window.innerHeight - 200} zIndex={400} resizable={false}>
+                        <DraggablePanel id="dock" title="Tools" key={`dock_${layoutKey}`} initialX={90} initialY={window.innerHeight - 190} zIndex={400} resizable={false}>
                         <div className="bg-slate-900/80 backdrop-blur border border-slate-700 p-2 rounded-xl animate-slideUp grid grid-cols-5 gap-2 shadow-2xl" title="Drag the dock to move it">
                             {/* Infrastructure */}
                             {minimizedPanels.has('infra') && (

@@ -3,6 +3,10 @@
 Newest first. Mirrored in the app under **Help → What's new** (`content/changelog.ts`).
 Versioning: MAJOR = big change in what the app is; MINOR = new features or data sources; PATCH = fixes.
 
+## 3.3.2 - 2026-11-12
+- Interconnectors, subsea/OFTO cables and gas pipelines visible at national zoom again; tiles include subsea cables from z3 and pipelines from z4.
+- Start-up panels: Regional Network + Live Outages (all screens), Live Systems on >= 1600 px; Data Sync minimised. UK fitted between panels.
+
 ## 3.3.1 - 2026-11-12
 - No live OpenStreetMap (Overpass) queries on zoom when the weekly tiles are available.
 
