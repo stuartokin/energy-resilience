@@ -1,0 +1,25 @@
+// Every data source the app uses. Shown in Help > About & sources, and in README.md.
+// When you add a source, add it here too.
+
+export interface DataSource { name: string; usedFor: string; refresh: string; licence: string; url: string; via?: string; }
+
+export const DATA_SOURCES: DataSource[] = [
+    { name: 'Elexon Insights (BMRS)', usedFor: 'Grid frequency, demand and history; generation by fuel; interconnector flows', refresh: 'Every minute (app refresh)', licence: 'Elexon BMRS data licence', url: 'https://bmrs.elexon.co.uk/api-documentation' },
+    { name: 'Elexon REMIT', usedFor: 'Power station and interconnector outages', refresh: 'Every 5 minutes', licence: 'Elexon BMRS data licence', url: 'https://bmrs.elexon.co.uk/remit' },
+    { name: 'Elexon system warnings (SYSWARN)', usedFor: 'NESO margin and demand-control notices', refresh: 'Every 5 minutes', licence: 'Elexon BMRS data licence', url: 'https://bmrs.elexon.co.uk/system-warnings' },
+    { name: 'NESO Carbon Intensity API', usedFor: 'GB and regional generation mix and carbon intensity', refresh: 'Every 5 minutes', licence: 'CC BY 4.0', url: 'https://carbonintensity.org.uk' },
+    { name: 'NESO DNO licence areas', usedFor: 'DNO boundaries on the map', refresh: 'Each publish', licence: 'NESO Open Data Licence', url: 'https://www.neso.energy/data-portal/gis-boundaries-gb-dno-license-areas' },
+    { name: 'UK Power Networks open data', usedFor: 'Live power cuts (London, South East, East)', refresh: 'Every minute', licence: 'CC BY 4.0', url: 'https://ukpowernetworks.opendatasoft.com/explore/dataset/ukpn-live-faults/' },
+    { name: 'Northern Powergrid open data', usedFor: 'Live power cuts (North East, Yorkshire)', refresh: 'Every minute', licence: 'Northern Powergrid Open Data Licence', url: 'https://northernpowergrid.opendatasoft.com/explore/dataset/live-power-cuts-data/' },
+    { name: 'NGED Connected Data', usedFor: 'Live power cuts (Midlands, South West, South Wales)', refresh: 'Every 2 minutes', licence: 'NGED Open Data Licence', url: 'https://connecteddata.nationalgrid.co.uk/dataset/live-power-cuts', via: 'Cloudflare Worker' },
+    { name: 'SSEN Power Track', usedFor: 'Live power cuts (North Scotland, Southern England)', refresh: 'Every 2 minutes', licence: 'CC BY 4.0', url: 'https://data.ssen.co.uk/@ssen-distribution/realtime_outage_dataset', via: 'Cloudflare Worker' },
+    { name: 'SP Energy Networks open data', usedFor: 'Live power cuts (Central & South Scotland, Merseyside & North Wales)', refresh: 'Every 2 minutes', licence: 'CC BY 4.0', url: 'https://spenergynetworks.opendatasoft.com/explore/dataset/national-energy-outage-data/', via: 'Cloudflare Worker (API key)' },
+    { name: 'National Gas Data Portal', usedFor: 'Gas demand, supply and linepack', refresh: 'Every 5 minutes', licence: 'National Gas data terms', url: 'https://data.nationalgas.com', via: 'Cloudflare Worker' },
+    { name: 'Met Office warnings', usedFor: 'Weather warnings', refresh: 'Every 5 minutes', licence: 'Crown copyright (Open Government Licence)', url: 'https://www.metoffice.gov.uk/weather/warnings-and-advice/uk-warnings', via: 'Cloudflare Worker' },
+    { name: 'Environment Agency flood monitoring', usedFor: 'Flood warnings (England)', refresh: 'Every 5 minutes', licence: 'Open Government Licence v3', url: 'https://environment.data.gov.uk/flood-monitoring/doc/reference' },
+    { name: 'OpenStreetMap (Overpass, Nominatim)', usedFor: 'Infrastructure (weekly snapshot and local detail), place search, Northern Ireland outline', refresh: 'Weekly snapshot; live when zoomed in', licence: 'ODbL', url: 'https://www.openstreetmap.org/copyright' },
+    { name: 'OSUKED Power Station Dictionary', usedFor: 'Locations of power station units (to place REMIT outages)', refresh: 'Each publish', licence: 'MIT', url: 'https://github.com/OSUKED/Power-Station-Dictionary' },
+    { name: 'Esri World Dark Gray Canvas', usedFor: 'Map background', refresh: 'Live tiles', licence: 'Esri terms of use (attribution)', url: 'https://www.arcgis.com/home/item.html?id=358ec1e175ea41c3bf5c68f0da11ae2b' },
+    { name: 'RainViewer', usedFor: 'Weather radar', refresh: 'Live tiles', licence: 'RainViewer API terms (attribution)', url: 'https://www.rainviewer.com/api.html' },
+    { name: 'Google Gemini (visitor\'s own key)', usedFor: 'AI analyst, AI summaries, AI-generated scenarios', refresh: 'On request', licence: 'Google Gemini API terms', url: 'https://ai.google.dev' },
+];

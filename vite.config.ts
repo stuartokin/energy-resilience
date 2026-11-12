@@ -12,6 +12,11 @@ export default defineConfig({
         host: '0.0.0.0',
     },
     plugins: [react()],
+    // Build stamp shown in Help (GITHUB_SHA is set automatically in GitHub Actions)
+    define: {
+        __BUILD_DATE__: JSON.stringify(new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC'),
+        __BUILD_COMMIT__: JSON.stringify((process.env.GITHUB_SHA || '').slice(0, 7)),
+    },
     resolve: {
         alias: {
             '@': path.resolve(__dirname, '.'),

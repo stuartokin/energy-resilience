@@ -1,7 +1,11 @@
 import { AssetType, InfrastructureAsset, RegionConfig, RiskScenario, TimelineStep, DNORegion } from './types';
 
-export const APP_VERSION = "3.0.0";
-export const BUILD_DATE = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+export const APP_VERSION = "3.1.0"; // keep in step with content/changelog.ts and CHANGELOG.md
+// Set at build time (vite.config.ts) - the date and commit of the published build.
+declare const __BUILD_DATE__: string;
+declare const __BUILD_COMMIT__: string;
+export const BUILD_DATE = typeof __BUILD_DATE__ !== 'undefined' ? __BUILD_DATE__ : 'development';
+export const BUILD_COMMIT = typeof __BUILD_COMMIT__ !== 'undefined' ? __BUILD_COMMIT__ : '';
 export const AI_BUILD_ID = "Gemini 2.5 Flash (visitor key)";
 
 // SVG Paths for Google Maps Symbols

@@ -1,0 +1,23 @@
+# Energy Sector Resilience & Risk: rules for Claude (and any AI agent)
+
+A public, personal project by Stuart Okin: a live picture of the GB energy system from public open data, with "what if" scenarios. It carries his name and Ofgem title, so accuracy and restraint matter more than features.
+
+## Honesty rules (non-negotiable)
+- **Never invent a figure.** No `Math.random()` or hard-coded numbers presented as data. Every number comes from a live source, a build-time dataset, or a documented assumption with its source.
+- **If data is missing, say so.** Show "unavailable", or the last real value marked "est." - never a plausible-looking substitute.
+- **Every estimate or modelled value carries its reasoning or source** next to it in the UI (and in the scenario parameter files once built).
+- **AI output is labelled** as unverified web search. AI never supplies the numbers in scenario impact models.
+- **No site-specific attack detail.** Scenarios are system-level and generic (e.g. "single OT vendor common-mode compromise"), never naming a vendor against mapped sites, never speculating about a specific site's suppliers, controls or weaknesses.
+- Don't use restricted data (e.g. ENWL "Shared" data) or anything not openly licensed for public display.
+
+## Documentation is part of every change
+- Bump `APP_VERSION` in `constants.ts`.
+- Add an entry at the top of `content/changelog.ts` **and** `CHANGELOG.md`.
+- New data source → `content/sources.ts`, the README source table and `ATTRIBUTION.md`.
+- New file or folder → the README "How it fits together" table.
+
+## Delivery
+Stuart uploads changes through GitHub's web upload. Deliver only changed files, as a zip that keeps the repo's folder structure. He edits `.github/` files himself.
+
+## Style
+British English. Plain, short sentences. Accessible contrast, labels on anything interactive, works on a phone (390 px wide).

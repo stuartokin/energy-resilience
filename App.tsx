@@ -357,8 +357,6 @@ export const App: React.FC = () => {
     useEffect(() => { assetsRef.current = assets; }, [assets]);
 
     const performUnifiedUpdate = useCallback(async () => {
-        const timeSinceInteraction = Date.now() - lastInteractionTime.current;
-        const skipHeavyTasks = timeSinceInteraction < 3000;
 
         // Routine refresh runs silently (no banner).
         
@@ -367,32 +365,15 @@ export const App: React.FC = () => {
             setNesoData(neso);
             
             const mix = await fetchGenerationMix();
-            setGenerationMix(mix);
+            if (mix) setGenerationMix(mix);
             
             const outages = await fetchRealTimeOutages(activeRegion.name);
             setLiveOutages(outages);
             setLastOutageCheck(new Date());
 
+            // Local infrastructure is loaded only when someone zooms in (see handleViewChange),
+            // never on this timer, so we don't keep hitting the free OpenStreetMap servers.
             let updatedAssets = assetsRef.current;
-            
-            if (!skipHeavyTasks) {
-                const centerLat = lastFetchCenterRef.current?.lat || activeRegion.lat;
-                const centerLng = lastFetchCenterRef.current?.lng || activeRegion.lng;
-
-                const enriched = await fetchEnergyInfrastructure(
-                    activeRegion.name, 
-                    assetsRef.current, 
-                    undefined,
-                    centerLat,
-                    centerLng,
-                    'local_only'
-                );
-                
-                if (enriched.length > assetsRef.current.length) {
-                    updatedAssets = enriched;
-                    setBackgroundTask(`Background Update: ${enriched.length} assets`);
-                }
-            }
 
             if (mix) {
                 updatedAssets = calculateAssetStatus(mix, updatedAssets);
@@ -625,16 +606,20 @@ export const App: React.FC = () => {
         }
     };
 
+    const loadedAreasRef = useRef<{ lat: number, lng: number }[]>([]);
     const handleViewChange = useCallback((center: { lat: number, lng: number, zoom: number }) => {
         setMapCenterOverride(null); 
         lastInteractionTime.current = Date.now();
         lastFetchCenterRef.current = { lat: center.lat, lng: center.lng };
         
         // Auto-fetch details on stable zoom in
-        if (center.zoom > 10 && center.zoom > lastZoomLevelRef.current && allowBackgroundUpdates) {
+        // Load local detail once per area (areas already loaded are skipped).
+        const alreadyLoaded = loadedAreasRef.current.some(a => Math.abs(a.lat - center.lat) < 0.15 && Math.abs(a.lng - center.lng) < 0.25);
+        if (center.zoom >= 11 && allowBackgroundUpdates && !alreadyLoaded) {
             if (mapDebounceRef.current) clearTimeout(mapDebounceRef.current);
             mapDebounceRef.current = setTimeout(async () => {
-                setBackgroundTask("Zoom Trigger: Detailed Local Scan...");
+                loadedAreasRef.current.push({ lat: center.lat, lng: center.lng });
+                setBackgroundTask("Loading local infrastructure from OpenStreetMap...");
                 try {
                     const localAssets = await fetchEnergyInfrastructure(
                         activeRegion.name,
@@ -1691,7 +1676,7 @@ export const App: React.FC = () => {
                                             Frequency <ChartBarIcon className="w-3 h-3" />
                                         </span>
                                         <span className={`font-mono text-base ${nesoData.frequency < 49.8 || nesoData.frequency > 50.2 ? 'text-red-400' : 'text-green-400'}`}>
-                                            {nesoData.frequency.toFixed(3)} Hz
+                                            {nesoData.frequency.toFixed(3)} Hz{nesoData.estimated && <span className="text-[9px] text-amber-400 ml-1" title="Live feed unavailable - last known value">est.</span>}
                                         </span>
                                     </div>
                                     {generationMix && (

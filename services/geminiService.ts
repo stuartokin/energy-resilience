@@ -4,6 +4,7 @@ import { RiskScenario, InfrastructureAsset, TimelineStep, ChatMessage, OutageEve
 import { ASSET_TYPES, DEEP_SEARCH_PROTOCOLS, REGIONS, UK_DNO_REGIONS } from '../constants';
 import { getAiKey, onAiKeyChange, requestAiKey } from './aiKey';
 import { OUTAGE_WORKER_URL } from '../config';
+import { markOk, markFail, statusOf } from './health';
 
 let aiClient: GoogleGenAI | null = null;
 let isAudioQuotaExceeded = false;
@@ -65,6 +66,10 @@ const handleApiError = (e: any) => {
 
 export const getApiSystemStatus = () => {
     const hasKey = !!getAiKey();
+    const row = (org: string, source: string, type: string, keyStatus = 'Open Data') => {
+        const h = statusOf(source);
+        return { org, status: h.status, keyStatus: h.detail || keyStatus, type };
+    };
     return [
         {
             org: "Google Gemini (your key)",
@@ -72,19 +77,20 @@ export const getApiSystemStatus = () => {
             keyStatus: !hasKey ? "Add key to enable AI" : isGenAIQuotaExceeded ? "Quota Limit" : "Your key",
             type: "AI Analysis"
         },
-        { org: "UK Power Networks", status: "Operational", keyStatus: "Open Data", type: "Live Power Cuts" },
-        { org: "Northern Powergrid", status: "Operational", keyStatus: "Open Data", type: "Live Power Cuts" },
+        row("UK Power Networks", 'ukpn', "Live Power Cuts"),
+        row("Northern Powergrid", 'npg', "Live Power Cuts"),
         ...(OUTAGE_WORKER_URL
             ? (workerSourceStatus.length ? workerSourceStatus : [{ name: 'NGED / SSEN / SPEN / ENWL', ok: false, error: 'Waiting for first update' } as any]).map(sr => ({
-                org: sr.name, status: sr.ok ? "Operational" : "Not connected", keyStatus: sr.ok ? "Open Data" : (sr.error || 'Unavailable'), type: "Live Power Cuts"
+                org: sr.name, status: sr.ok ? "Operational" : "Not connected", keyStatus: sr.ok ? `${sr.count} live incidents` : (sr.error || 'Unavailable'), type: "Live Power Cuts"
             }))
             : [{ org: "NGED, SSEN, SPEN, ENWL", status: "Not connected", keyStatus: "Needs Cloudflare Worker", type: "Live Power Cuts" }]),
-        { org: "Elexon Insights (BMRS)", status: "Operational", keyStatus: "Open Data", type: "Frequency & Demand" },
-        { org: "Elexon REMIT", status: "Operational", keyStatus: "Open Data", type: "Generator Outages" },
-        { org: "NESO Carbon Intensity", status: "Operational", keyStatus: "Open Data", type: "Generation Mix" },
-        { org: "OpenStreetMap / Overpass", status: "Operational", keyStatus: "Open Data", type: "Infrastructure & Search" },
-        { org: "Esri Dark Gray Canvas", status: "Operational", keyStatus: "Public", type: "Map Tiles" },
-        { org: "RainViewer", status: "Operational", keyStatus: "Public", type: "Weather Radar" },
+        row("Elexon (frequency & demand)", 'elexon', "Frequency & Demand"),
+        row("Elexon REMIT", 'remit', "Generator Outages"),
+        row("Generation mix (NESO / Elexon)", 'mix', "Generation Mix"),
+        row("Infrastructure snapshot", 'snapshot', "OpenStreetMap (built weekly)"),
+        row("OpenStreetMap live (Overpass)", 'overpass', "Local detail when zoomed in"),
+        row("Esri Dark Gray Canvas", 'basemap', "Map Tiles", 'Public'),
+        row("RainViewer", 'radar', "Weather Radar", 'Public'),
     ];
 };
 
@@ -144,6 +150,7 @@ const fetchOverpassWithRetry = async (query: string, signal?: AbortSignal, perRe
             });
             if (response.ok) {
                 preferredOverpass = idx; // remember the server that worked
+                markOk('overpass', new URL(url).host);
                 return await response.json();
             }
             lastErr = new Error(`Overpass ${new URL(url).host} returned ${response.status}`);
@@ -156,7 +163,18 @@ const fetchOverpassWithRetry = async (query: string, signal?: AbortSignal, perRe
         }
         console.warn(`Overpass server failed, trying next: ${lastErr?.message}`);
     }
+    markFail('overpass', 'all servers busy');
     throw lastErr || new Error('All Overpass servers failed');
+};
+
+// OSM output tags look like "1200 MW", "49.9 MW", "500 kW" or "yes". Returns MW, or undefined.
+const parseOsmPowerMW = (v: any): number | undefined => {
+    const m = String(v || '').trim().match(/^([\d.]+)\s*(GW|MW|kW|W)?$/i);
+    if (!m) return undefined;
+    const n = parseFloat(m[1]);
+    const unit = (m[2] || 'MW').toUpperCase();
+    const mw = unit === 'GW' ? n * 1000 : unit === 'KW' ? n / 1000 : unit === 'W' ? n / 1e6 : n;
+    return isFinite(mw) && mw > 0 ? Math.round(mw * 100) / 100 : undefined;
 };
 
 // Convert OpenStreetMap (Overpass) elements into map assets.
@@ -225,10 +243,9 @@ export const osmElementsToAssets = (elements: any[]): InfrastructureAsset[] => {
                 lng = el.lon;
             }
 
-            let cYear = undefined;
-            if (isDc) {
-                cYear = Math.floor(2015 + Math.random() * 11);
-            }
+            // Commissioning year only if OpenStreetMap records one (start_date); never invented.
+            const sd = parseInt(String(tags.start_date || '').slice(0, 4), 10);
+            const cYear = sd > 1900 && sd < 2100 ? sd : undefined;
 
             if (!lat || !lng) return null;
 
@@ -238,7 +255,7 @@ export const osmElementsToAssets = (elements: any[]): InfrastructureAsset[] => {
                 typeId: typeId,
                 lat: lat,
                 lng: lng,
-                capacityMW: isDc ? Math.floor(Math.random() * 150 + 50) : undefined,
+                capacityMW: parseOsmPowerMW(tags['plant:output:electricity'] || tags['generator:output:electricity']), // from OSM tags when recorded
                 status: 'Operational' as const,
                 commissionYear: cYear,
                 path: path,
@@ -252,7 +269,7 @@ export const osmElementsToAssets = (elements: any[]): InfrastructureAsset[] => {
 const fetchOverpassData = async (lat: number, lng: number, scope: 'national' | 'local', onProgress?: (msg: string) => void, signal?: AbortSignal): Promise<InfrastructureAsset[]> => {
     if (onProgress) onProgress(`Querying OSM (${scope.toUpperCase()} scope)...`);
 
-    const delta = scope === 'national' ? 4.5 : 0.6;
+    const delta = scope === 'national' ? 4.5 : 0.2; // local: roughly a 45 x 45 km area
     const limit = scope === 'national' ? 3000 : 1500;
     
     const s = lat - delta;
@@ -425,6 +442,8 @@ const fetchWithTimeout = async (url: string, ms = 6000) => {
     }
 };
 
+let lastGoodPower: { demand: number, frequency: number, carbonIntensity: number } | null = null;
+
 // Live GB grid snapshot: Elexon (frequency, demand) + NESO Carbon Intensity.
 export const fetchNESOPowerData = async (): Promise<{demand: number, frequency: number, carbonIntensity: number, estimated?: boolean}> => {
     let demand = 0;
@@ -466,15 +485,14 @@ export const fetchNESOPowerData = async (): Promise<{demand: number, frequency: 
         logSystemError("Elexon / NESO fetch error", e.message, "warning");
     }
 
-    // Fallbacks (only used if the open data services are unreachable) - flagged as estimates.
+    // If a live value couldn't be fetched, reuse the last real value and flag it as estimated.
+    // Nothing random is ever shown.
     const estimated = demand === 0 || frequency === 0;
-    if (demand === 0) {
-        logSystemError("Live demand unavailable", "Using estimated demand profile", "warning");
-        const hour = new Date().getHours();
-        demand = Math.floor(22000 + ((hour > 7 && hour < 22) ? 15000 : 0) + Math.random() * 2000);
-    }
-    if (frequency === 0) frequency = 50.0 + ((Math.random() - 0.5) * 0.1);
-    if (carbonIntensity === 0) carbonIntensity = 150;
+    if (!estimated) { markOk('elexon'); lastGoodPower = { demand, frequency, carbonIntensity: carbonIntensity || lastGoodPower?.carbonIntensity || 0 }; }
+    else markFail('elexon', 'live demand/frequency unavailable');
+    if (demand === 0) demand = lastGoodPower?.demand || 0;
+    if (frequency === 0) frequency = lastGoodPower?.frequency || 50.0;
+    if (carbonIntensity === 0) carbonIntensity = lastGoodPower?.carbonIntensity || 0;
 
     return { demand, frequency, carbonIntensity, estimated };
 };
@@ -494,7 +512,7 @@ export const fetchGenerationMix = async (): Promise<GenerationMix | null> => {
         const response = await fetchWithTimeout('https://api.carbonintensity.org.uk/generation', 8000);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const genData = (await response.json()).data;
-        if (genData?.generation?.length) return summariseMix(genData.from, genData.to, genData.generation);
+        if (genData?.generation?.length) { markOk('mix', 'NESO'); return summariseMix(genData.from, genData.to, genData.generation); }
         throw new Error('No generation data');
     } catch (e: any) {
         logSystemError("NESO generation mix unavailable - trying Elexon", e.message, "warning");
@@ -514,125 +532,75 @@ export const fetchGenerationMix = async (): Promise<GenerationMix | null> => {
         if (!total) throw new Error('No data');
         const mix = Object.entries(groups).map(([fuel, mw]) => ({ fuel, perc: Math.round((mw / total) * 1000) / 10 }));
         const now = new Date().toISOString();
+        markOk('mix', 'Elexon backup');
         return summariseMix(now, now, mix);
     } catch (e: any) {
+        markFail('mix', e.message);
         logSystemError("Generation mix unavailable", e.message, "warning");
         return null;
     }
 };
 
+// Real history only, from Elexon. Returns [] if it can't be loaded (the chart then says so).
+//   Demand:    24h = 5-minute rolling demand; 7d/30d = half-hourly outturn; 1y = daily average.
+//   Frequency: 24h = 1-minute averages of 15-second readings; 7d = 15-minute averages.
+//              Longer frequency ranges aren't offered (tens of MB of data).
+export const GRID_HISTORY_RANGES: Record<'demand' | 'frequency', ('24h' | '7d' | '30d' | '1y')[]> = {
+    demand: ['24h', '7d', '30d', '1y'],
+    frequency: ['24h', '7d'],
+};
+
+const bucketAverage = (points: { timestamp: number, value: number }[], bucketMs: number) => {
+    const buckets = new Map<number, { sum: number, n: number }>();
+    points.forEach(p => {
+        const k = Math.floor(p.timestamp / bucketMs) * bucketMs;
+        const b = buckets.get(k) || { sum: 0, n: 0 };
+        b.sum += p.value; b.n++;
+        buckets.set(k, b);
+    });
+    return Array.from(buckets.entries()).sort((x, y) => x[0] - y[0]).map(([t, b]) => ({ timestamp: t, value: b.sum / b.n }));
+};
+
 export const fetchGridHistory = async (metric: 'demand' | 'frequency', range: '24h' | '7d' | '30d' | '1y'): Promise<{ timestamp: number, value: number }[]> => {
     const cacheKey = `${metric}_${range}`;
     if (historyCache.has(cacheKey)) return historyCache.get(cacheKey)!;
-
-    let data: { timestamp: number, value: number }[] = [];
     const now = Date.now();
-    let points = 48; // Default 24h (30 min)
-    let intervalMs = 1800000;
-
-    switch (range) {
-        case '24h': points = 48; intervalMs = 1800000; break; 
-        case '7d': points = 168; intervalMs = 3600000; break; // 1h
-        case '30d': points = 120; intervalMs = 21600000; break; // 6h
-        case '1y': points = 365; intervalMs = 86400000; break; // 1d
-    }
-
-    // 1. Fetch Live Anchor (Real-time Value)
-    // We use this to anchor the end of the graph to reality, even if history needs simulation.
-    let anchorValue = 0;
+    const day = (n: number) => new Date(now - n * 86400000).toISOString().slice(0, 10);
+    let data: { timestamp: number, value: number }[] = [];
     try {
-        const live = await fetchNESOPowerData();
-        if (metric === 'demand') anchorValue = live.demand;
-        if (metric === 'frequency') anchorValue = live.frequency;
-    } catch (e) {
-        console.warn("Failed to get anchor value");
-    }
-
-    // Default Anchors if live fetch completely fails
-    if (!anchorValue || anchorValue === 0) {
-        if (metric === 'demand') anchorValue = 32000; // Typical UK demand MW
-        if (metric === 'frequency') anchorValue = 50.0;
-    }
-
-    // 2. Real history from Elexon for the last 24 hours
-    let fetchedData: { timestamp: number, value: number }[] = [];
-    if (range === '24h') {
-        try {
-            if (metric === 'demand') {
-                const resp = await fetchWithTimeout(`${ELEXON_API}/demand/outturn/summary?format=json`, 8000);
-                if (resp.ok) {
-                    const rows = await resp.json();
-                    const list = Array.isArray(rows) ? rows : rows.data || [];
-                    const cutoff = now - 86400000;
-                    list.forEach((r: any) => {
-                        const t = new Date(r.startTime).getTime();
-                        if (t >= cutoff && typeof r.demand === 'number') fetchedData.push({ timestamp: t, value: r.demand });
-                    });
+        if (metric === 'demand') {
+            if (range === '24h') {
+                const rows = await (await fetchWithTimeout(`${ELEXON_API}/demand/outturn/summary?format=json`, 10000)).json();
+                data = (Array.isArray(rows) ? rows : rows.data || [])
+                    .map((r: any) => ({ timestamp: Date.parse(r.startTime), value: r.demand }))
+                    .filter((p: any) => p.timestamp >= now - 86400000);
+            } else if (range === '7d' || range === '30d') {
+                // The API allows up to 28 days per request.
+                const spans = range === '7d' ? [[7, 0]] : [[30, 16], [15, 0]];
+                for (const [from, to] of spans) {
+                    const json = await (await fetchWithTimeout(`${ELEXON_API}/demand/outturn?settlementDateFrom=${day(from)}&settlementDateTo=${day(to)}&format=json`, 15000)).json();
+                    (json.data || []).forEach((r: any) => data.push({ timestamp: Date.parse(r.startTime), value: r.initialDemandOutturn }));
                 }
             } else {
-                const from = new Date(now - 86400000).toISOString();
-                const to = new Date(now).toISOString();
-                const resp = await fetchWithTimeout(`${ELEXON_API}/system/frequency?from=${from}&to=${to}&format=json`, 10000);
-                if (resp.ok) {
-                    const json = await resp.json();
-                    const rows = json.data || [];
-                    // 15-second data: keep one reading per 5 minutes for the chart
-                    rows.forEach((r: any, i: number) => {
-                        if (i % 20 === 0) fetchedData.push({ timestamp: new Date(r.measurementTime).getTime(), value: r.frequency });
-                    });
-                }
+                const json = await (await fetchWithTimeout(`${ELEXON_API}/demand/outturn/daily?settlementDateFrom=${day(365)}&settlementDateTo=${day(0)}&format=json`, 15000)).json();
+                // Daily energy (MWh) -> average demand over the day (MW)
+                data = (json.data || []).map((r: any) => ({ timestamp: Date.parse(r.settlementDate + 'T12:00:00Z'), value: r.demand / 24 }));
             }
-        } catch (e) {
-            console.warn("Elexon history fetch error", e);
+        } else {
+            if (!GRID_HISTORY_RANGES.frequency.includes(range)) return [];
+            const span = range === '24h' ? 86400000 : 7 * 86400000;
+            const json = await (await fetchWithTimeout(`${ELEXON_API}/system/frequency?from=${new Date(now - span).toISOString()}&to=${new Date(now).toISOString()}&format=json`, 20000)).json();
+            const raw = (json.data || []).map((r: any) => ({ timestamp: Date.parse(r.measurementTime), value: r.frequency }));
+            data = bucketAverage(raw, range === '24h' ? 60000 : 900000);
         }
+        data = data.filter(p => isFinite(p.timestamp) && isFinite(p.value)).sort((x, y) => x.timestamp - y.timestamp);
+        // De-duplicate timestamps (overlapping requests)
+        data = data.filter((p, i) => i === 0 || p.timestamp !== data[i - 1].timestamp);
+    } catch (e: any) {
+        logSystemError(`Grid ${metric} history unavailable`, e.message, "warning");
+        return [];
     }
-
-    // 3. Construct Final Data (Real or Synthetic)
-    if (fetchedData.length >= 24) {
-        // Use real data if we have enough points (e.g. half a day)
-        data = fetchedData.sort((a,b) => a.timestamp - b.timestamp);
-    } else {
-        // SYNTHETIC GENERATION
-        // Backfill using anchorValue and profiles so charts are never empty
-        for (let i = points; i >= 0; i--) {
-            const ts = now - (i * intervalMs);
-            const date = new Date(ts);
-            const hour = date.getHours() + (date.getMinutes() / 60);
-            
-            let val = anchorValue;
-
-            if (metric === 'demand') {
-                // Generate a realistic curve relative to the anchor (current time)
-                // Profile returns 0.65 (night) to 1.0 (peak)
-                const getProfile = (h: number) => {
-                    if (h < 5) return 0.65;
-                    if (h < 9) return 0.65 + ((h-5)/4)*0.25; // Rise 0.65->0.9
-                    if (h < 16) return 0.9;
-                    if (h < 18) return 0.9 + ((h-16)/2)*0.1; // Rise 0.9->1.0
-                    if (h < 20) return 1.0;
-                    return 1.0 - ((h-20)/4)*0.35; // Fall
-                };
-                
-                const currentHour = new Date().getHours() + (new Date().getMinutes()/60);
-                const currentFactor = getProfile(currentHour);
-                const historyFactor = getProfile(hour);
-                
-                // Adjust: val = anchor * (historical_profile / current_profile)
-                val = anchorValue * (historyFactor / currentFactor) + ((Math.random()-0.5)*500);
-            } else {
-                // Frequency: Random walk returning to anchor
-                // We assume frequency stays near 50.0
-                const diff = 50.0 - anchorValue; 
-                // interpolate from 50.0 (past assumption) to anchor (now)
-                const progress = 1 - (i / points); // 0 (past) -> 1 (now)
-                const base = 50.0 - (diff * progress); // Linear trend to target
-                val = base + ((Math.random() - 0.5) * 0.05);
-            }
-            data.push({ timestamp: ts, value: val });
-        }
-    }
-
-    historyCache.set(cacheKey, data);
+    if (data.length) historyCache.set(cacheKey, data);
     return data;
 };
 
@@ -645,7 +613,8 @@ export const analyzeGridHistory = async (metric: string, range: string, data: { 
     const sampled = data.filter((_, i) => i % sampleRate === 0).map(d => `${new Date(d.timestamp).toLocaleDateString()} ${new Date(d.timestamp).getHours()}:00 = ${d.value.toFixed(2)}`);
 
     const prompt = `
-        Analyze the following historical ${metric} data for the UK Energy Grid over the last ${range}.
+        Analyze the following historical ${metric} data for the GB electricity system over the last ${range} (source: Elexon, real measured data; demand in MW, frequency in Hz).
+        Only describe patterns visible in these numbers; if you suggest causes, say they are possible explanations, not established facts.
         Data Points (Sampled): ${sampled.join(", ")}.
         
         Identify:
@@ -812,8 +781,10 @@ export const fetchGeneratorOutages = async (): Promise<GeneratorOutage[]> => {
             })
             .sort((a, b) => b.unavailableMW - a.unavailableMW);
         remitCache = { t: Date.now(), data: result };
+        markOk('remit', `${result.length} active notices`);
         return result;
     } catch (e: any) {
+        markFail('remit', e.message);
         logSystemError("Elexon REMIT (generator outages) unavailable", e.message, "warning");
         return remitCache?.data || [];
     }
@@ -863,8 +834,10 @@ const loadUkSnapshot = async (): Promise<InfrastructureAsset[]> => {
         if (elements.length === 0) return [];
         ukSnapshotDate = json.generated || null;
         ukSnapshotCache = osmElementsToAssets(elements);
+        markOk('snapshot', `${ukSnapshotCache.length} assets${ukSnapshotDate ? ', built ' + ukSnapshotDate.slice(0, 10) : ''}`);
         return ukSnapshotCache;
     } catch (e: any) {
+        markFail('snapshot', e.message);
         logSystemError("Infrastructure snapshot unavailable", e.message, "warning");
         return [];
     }
@@ -979,6 +952,7 @@ const fetchUkpnLiveFaults = async (): Promise<OutageEvent[]> => {
         const resp = await fetchWithTimeout(url, 8000);
         if (!resp.ok) throw new Error(`UKPN ${resp.status}`);
         const json = await resp.json();
+        markOk('ukpn');
         return (json.results || [])
             .filter((r: any) => !r.restoreddatetime && r.geopoint && r.powercuttype !== 'Restored')
             .map((r: any): OutageEvent => {
@@ -999,6 +973,7 @@ const fetchUkpnLiveFaults = async (): Promise<OutageEvent[]> => {
                 };
             });
     } catch (e: any) {
+        markFail('ukpn', e.message);
         logSystemError("UKPN live faults unavailable", e.message, "warning");
         return [];
     }
@@ -1014,6 +989,7 @@ const fetchNpgLiveFaults = async (): Promise<OutageEvent[]> => {
         const resp = await fetchWithTimeout(url, 10000);
         if (!resp.ok) throw new Error(`Northern Powergrid ${resp.status}`);
         const rows: any[] = await resp.json();
+        markOk('npg');
 
         const groups = new Map<string, any[]>();
         rows.forEach(r => {
@@ -1043,6 +1019,7 @@ const fetchNpgLiveFaults = async (): Promise<OutageEvent[]> => {
             };
         });
     } catch (e: any) {
+        markFail('npg', e.message);
         logSystemError("Northern Powergrid live faults unavailable", e.message, "warning");
         return [];
     }
@@ -1157,7 +1134,7 @@ export const fetchHistoricalOutages = async (regionName: string, year: number = 
                  locationName: r.locationName || "Unknown Location",
                  lat: r.lat,
                  lng: r.lng,
-                 consumersAffected: r.consumersAffected || Math.floor(Math.random() * 5000) + 1000,
+                 consumersAffected: Number(r.consumersAffected) || 0,
                  description: r.description || "Historical Outage Event",
                  startTime: r.startTime || `${year}-01-01`,
                  source: r.source || "Historical Archive",

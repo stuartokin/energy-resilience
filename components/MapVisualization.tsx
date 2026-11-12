@@ -4,6 +4,7 @@ import 'leaflet/dist/leaflet.css';
 import { InfrastructureAsset, RegionConfig, RiskScenario, OutageEvent, DNORegion, AssetType, GeneratorOutage } from '../types';
 import { ASSET_TYPES } from '../constants';
 import { InterconnectorFlow, RegionalCarbon, FloodWarning, WeatherWarning } from '../services/liveSystems';
+import { markOk, markFail } from '../services/health';
 import { PlusIcon, MinusIcon, ExclamationTriangleIcon } from '@heroicons/react/24/solid';
 
 interface MapProps {
@@ -139,9 +140,10 @@ const MapVisualization: React.FC<MapProps> = ({
                 const data = await res.json();
                 const frames = data.radar?.past || [];
                 const last = frames[frames.length - 1];
-                if (last) setWeather({ host: data.host || 'https://tilecache.rainviewer.com', path: last.path || `/v2/radar/${last.time}` });
+                if (last) { setWeather({ host: data.host || 'https://tilecache.rainviewer.com', path: last.path || `/v2/radar/${last.time}` }); markOk('radar'); }
             } catch (e) {
                 console.warn("Weather radar unavailable", e);
+                markFail('radar', 'unavailable');
             }
         };
         fetchWeather();
@@ -157,7 +159,10 @@ const MapVisualization: React.FC<MapProps> = ({
             preferCanvas: true,
             worldCopyJump: true
         });
-        L.tileLayer(BASEMAP_URL, { attribution: BASEMAP_ATTRIBUTION, maxNativeZoom: 16, maxZoom: 19, className: 'basemap-tiles' }).addTo(map);
+        L.tileLayer(BASEMAP_URL, { attribution: BASEMAP_ATTRIBUTION, maxNativeZoom: 16, maxZoom: 19, className: 'basemap-tiles' })
+            .on('tileload', () => markOk('basemap'))
+            .on('tileerror', () => markFail('basemap', 'tiles failed to load'))
+            .addTo(map);
         // Place-name labels sit above the infrastructure so towns stay readable
         map.createPane('labels');
         const labelsPane = map.getPane('labels');

@@ -1,44 +1,83 @@
 # Energy Sector Resilience & Risk
 
-An interactive map of GB energy infrastructure with live grid data and "what if" disruption scenarios: storms, cyber attacks, asset failures, supply-chain problems and demand growth.
+A live picture of the GB energy system - infrastructure, power cuts, generator outages, flows and warnings - built only from public open data, with "what if" disruption scenarios on top.
 
-By Stuart Okin, Director of Cyber Regulation and Emerging Technologies, Ofgem. A personal project, not an Ofgem product.
+**Live site:** https://stuartokin.github.io/energy-resilience/ · **Version:** see [CHANGELOG.md](CHANGELOG.md)
 
-## What works without any setup
+*A personal project by Stuart Okin, Director of Cyber Regulation and Emerging Technologies, Ofgem. Not an official product of Ofgem or any other organisation. Live data comes directly from the publishers listed below. AI features are optional, use each visitor's own key, and are labelled as unverified. Scenario impacts are modelled illustrations, not forecasts.*
 
-- **Map** of generation, transmission, distribution and interconnectors (OpenStreetMap data, Esri dark grey basemap)
-- **Live grid data**: frequency and demand from Elexon, generation mix and carbon intensity from NESO
-- **Live power cuts** from UK Power Networks (London, South East, East) and Northern Powergrid (North East, Yorkshire), from their open data
-- **DNO licence areas** with their real boundaries (NESO open data)
-- **Power station and interconnector outages** live from Elexon REMIT notices (amber diamonds = unplanned, grey = planned; size = MW unavailable)
-- **Live Systems panel**: interconnector flows, generator outages, gas system (demand, supply, linepack), Met Office weather warnings and Environment Agency flood warnings, refreshed every 5 minutes
-- **Interconnector flows** on the map at each GB landing point (green = importing, orange = exporting)
-- **Regional carbon intensity and generation mix** in each DNO area's popup (NESO)
-- **Flood warnings** (England) and **weather warnings** as map layers
-- **Weather radar** (RainViewer)
-- **Built-in scenarios** with a day-by-day timeline of customers off supply, cost and restoration
-- **Place search** (OpenStreetMap)
+## How this works, in plain English
 
-No accounts, no API keys, no cost.
+- **What you are looking at.** A map of GB energy infrastructure with live layers: power cuts from five DNOs, power station and interconnector outages, interconnector flows, gas system, grid frequency and demand, regional carbon intensity, and weather and flood warnings.
+- **Where the data comes from.** Directly from the organisations that publish it (Elexon, NESO, the DNOs, National Gas, Met Office, Environment Agency, OpenStreetMap). Nothing is typed in by hand. Every source is listed in the app under **Help → About & sources** and in the table below.
+- **How honesty is kept.** The app never invents a figure. If a feed fails, it shows the last real value marked "est." and the System Status says which feed failed. Modelled or estimated figures show their reasoning or source next to them.
+- **What costs money.** Nothing. The map, data and hosting are free. AI features use each visitor's own free Gemini key, stored only in their browser.
+- **What it cannot tell you.** Power-cut coverage excludes Electricity North West (restricted licence) and Northern Ireland (no open feed). OpenStreetMap is volunteer-mapped, so infrastructure coverage is very good but not complete. Scenario results are illustrations.
+
+## How it fits together
+
+| Path | What it is |
+|---|---|
+| `index.html`, `index.tsx`, `App.tsx` | The app (React + TypeScript, built with Vite). `App.tsx` holds the layout, panels and state. |
+| `components/` | Map (`MapVisualization.tsx`), panels, modals, help (`HelpModal.tsx`), live systems panel, AI key box. |
+| `services/geminiService.ts` | Live data fetching (Elexon, NESO, DNOs, REMIT), the OpenStreetMap snapshot loader, and all AI (Gemini) features. |
+| `services/liveSystems.ts` | Interconnector flows, regional carbon, flood warnings, gas, weather warnings, NESO system notices. |
+| `services/health.ts` | Records whether each data source really answered; drives System Status. |
+| `services/aiKey.ts` | The visitor's own Gemini key (browser only). |
+| `content/changelog.ts` | **What's new** in the app. Mirror of `CHANGELOG.md`. |
+| `content/sources.ts` | **Every data source**: what it's used for, licence, refresh rate. Shown in Help. |
+| `constants.ts` | Version number, asset types, built-in assets and scenarios. |
+| `config.ts` | Site settings - the Cloudflare Worker address. |
+| `worker/outages-worker.js` | The Cloudflare Worker: collects NGED, SSEN, SPEN power cuts, National Gas and Met Office data (sources a web page can't read directly). Runs on Cloudflare, not GitHub. |
+| `scripts/build-osm-snapshot.mjs` | Run by GitHub Actions on each publish and weekly. Builds `data/osm-uk.json` (OpenStreetMap infrastructure) and calls the two scripts below. |
+| `scripts/build-dno-areas.mjs`, `scripts/dno-geometry.mjs` | Download NESO's DNO boundaries, convert from British National Grid, simplify → `data/dno-areas.json`. |
+| `scripts/build-bmu-locations.mjs` | Power station unit locations → `data/bmu-locations.json` (places REMIT outages on the map). |
+| `.github/workflows/deploy.yml` | Builds and publishes the site on every upload to `main`, and every Monday. |
+| `CHANGELOG.md` | Version history. |
+| `CLAUDE.md` | Rules for AI agents working on this repo (honesty, sources, style). |
+| `ATTRIBUTION.md` | Data licences and required credits. |
+
+### How the pieces connect
+
+```
+ Visitor's browser ──► GitHub Pages (this app)
+        │                  └─ data/*.json  ◄── built weekly by GitHub Actions (OpenStreetMap, NESO, Power Station Dictionary)
+        ├──► Elexon, NESO, UKPN, Northern Powergrid, Environment Agency   (read directly, every 1-5 min)
+        ├──► Cloudflare Worker ──► NGED, SSEN, SPEN, National Gas, Met Office   (cached 2 min)
+        └──► Google Gemini (only if the visitor adds their own key)
+```
+
+## Updating the app
+
+**Normal updates (code or content):** upload changed files to `main` (Add file → Upload files). GitHub Actions rebuilds and publishes in a few minutes - watch the **Actions** tab for the green tick.
+
+**Every release:**
+1. Bump `APP_VERSION` in `constants.ts`.
+2. Add an entry at the **top** of `content/changelog.ts` and `CHANGELOG.md`.
+3. If you added a data source, add it to `content/sources.ts`, this README's source table and `ATTRIBUTION.md`.
+
+**Version numbers:** MAJOR.MINOR.PATCH - major = big change in what the app is; minor = new features or data sources; patch = fixes.
+
+**When `worker/outages-worker.js` changes:** open it on GitHub → **Copy raw file** → Cloudflare → your Worker → **Edit code** → select all, paste → **Deploy**. Secrets (`SPEN_API_KEY`) are kept.
+
+**Check it's healthy:** open the site → click the green dot by "UK" → System Status shows each source and when it last answered.
 
 ## Turning on the AI features (each visitor uses their own free key)
 
-The AI analyst, generated scenarios, live outage search, supply-chain analysis and reports use Google Gemini. Each visitor adds their own key, so the site owner pays nothing.
-
 1. Click **AI: Off** in the top bar.
-2. Click the link to **Google AI Studio → Get API key**, sign in, then click **Create API key**.
+2. Click **Google AI Studio → Get API key**, sign in, then **Create API key**.
 3. Paste the key and click **Save**.
 
-The key stays in that visitor's browser and is sent only to Google. Click **Remove** in the same box to delete it. Google's free tier covers normal use; video reports need a paid key.
+The key stays in that browser and is sent only to Google. Click **Remove** to delete it.
 
-## Publishing on GitHub Pages (one-off setup)
+## One-off setup (already done for this repo)
 
-1. In the repo, create the file `.github/workflows/deploy.yml` with the contents below and commit it.
-2. Go to **Settings → Pages**. Under **Build and deployment → Source**, choose **GitHub Actions**.
-3. Open the **Actions** tab and wait for the green tick (about a minute).
-4. The site is live at `https://stuartokin.github.io/energy-resilience/`.
+<details>
+<summary>Publishing on GitHub Pages</summary>
 
-After that, every upload to `main` republishes the site automatically. It also rebuilds every Monday to refresh the infrastructure snapshot (see below).
+1. Create `.github/workflows/deploy.yml` (contents below).
+2. **Settings → Pages → Source: GitHub Actions.**
+3. Wait for the green tick on **Actions**. The site is at `https://stuartokin.github.io/energy-resilience/`.
 
 ```yaml
 name: Deploy to GitHub Pages
@@ -86,75 +125,56 @@ jobs:
       - id: deployment
         uses: actions/deploy-pages@v4
 ```
+</details>
 
-Note: GitHub Pages on a **private** repo needs a paid GitHub plan. On a free plan, make the repo public first.
-
-## Live power cuts from every DNO (optional, free)
-
-UK Power Networks and Northern Powergrid work straight away. The other DNOs' feeds can't be read directly by a web page, so a small free **Cloudflare Worker** collects them and passes them to the site.
-
-| DNO | Needs |
-|---|---|
-| NGED, SSEN | Just the Worker |
-| SP Energy Networks, Electricity North West | The Worker + a free API key from each DNO's open-data portal |
-
-**Set up the Worker (about 10 minutes, once):**
+<details>
+<summary>The Cloudflare Worker (power cuts from NGED, SSEN, SPEN; gas; Met Office)</summary>
 
 1. Sign up free at [dash.cloudflare.com](https://dash.cloudflare.com/sign-up).
-2. Go to **Workers & Pages → Create → Create Worker** (the "Hello World" starter). Name it `energy-outages` and click **Deploy**.
-3. Click **Edit code**, delete everything, paste in the whole of `worker/outages-worker.js`, then click **Deploy**.
-4. Copy the Worker's address, e.g. `https://energy-outages.yourname.workers.dev`. Open it in a browser and add `/outages` to check you see a list.
-5. In this repo, put that address in `config.ts` (`OUTAGE_WORKER_URL`) and upload it.
+2. **Compute → Workers & Pages → Create → Start with Hello World.** Name it `energy-outages`. Leave **Protect with Cloudflare Access** off. **Deploy**.
+3. **Edit code** → delete everything → paste all of `worker/outages-worker.js` → **Deploy**.
+4. Check `https://energy-outages.<you>.workers.dev/outages` shows data.
+5. Put the address in `config.ts` (`OUTAGE_WORKER_URL`).
+6. SP Energy Networks: create a free account and API key at spenergynetworks.opendatasoft.com, then Worker → **Settings → Variables and Secrets → Add → Secret** named `SPEN_API_KEY` → **Deploy**.
 
-**Add SPEN and ENWL (optional):**
+Electricity North West's outage data is classified "Shared" (public bodies only, restricted licence), so it is deliberately not used. The Worker caches for 2 minutes; Cloudflare's free plan allows 100,000 requests a day.
+</details>
 
-1. Create free accounts at [SP Energy Networks open data](https://spenergynetworks.opendatasoft.com) and [Electricity North West open data](https://electricitynorthwest.opendatasoft.com).
-2. On each, go to your account → **API keys** → create a key. Request access to the outage dataset if asked.
-3. In Cloudflare, open the Worker → **Settings → Variables and Secrets → Add**, type **Secret**, name `SPEN_API_KEY` (and `ENWL_API_KEY`), paste the key, **Deploy**.
+<details>
+<summary>Running it on your own computer</summary>
 
-The Worker also serves `/gas` (National Gas) and `/warnings` (Met Office), which browsers can't read directly. Whenever `worker/outages-worker.js` changes, paste the new version into Cloudflare (**Edit code** → paste → **Deploy**).
-
-The keys stay in Cloudflare and never appear in this repo or the website. Check ENWL's licence terms before showing its data publicly. The Worker caches results for 2 minutes, so the DNOs are asked at most once every 2 minutes however many people visit. Cloudflare's free plan allows 100,000 requests a day.
-
-## Running it on your own computer (optional)
-
-Needs [Node.js](https://nodejs.org) 20 or later.
-
-```bash
-npm install
-npm run dev
-```
-
-Then open http://localhost:3000.
+Needs [Node.js](https://nodejs.org) 20+. Run `npm install`, then `npm run dev`, then open http://localhost:3000.
+</details>
 
 ## Data sources
 
-| Source | Used for | Key needed? |
-|---|---|---|
-| [Elexon Insights (BMRS)](https://bmrs.elexon.co.uk/api-documentation) | Grid frequency, rolling demand | No |
-| [NESO Carbon Intensity](https://carbonintensity.org.uk) | Generation mix, carbon intensity | No |
-| [OpenStreetMap](https://www.openstreetmap.org) / Overpass / Nominatim | Infrastructure, place search | No |
-| [UK Power Networks open data](https://ukpowernetworks.opendatasoft.com/explore/dataset/ukpn-live-faults/) | Live power cuts (UKPN areas) | No |
-| [Northern Powergrid open data](https://northernpowergrid.opendatasoft.com/explore/dataset/live-power-cuts-data/) | Live power cuts (NPg areas) | No |
-| [Elexon REMIT](https://bmrs.elexon.co.uk/remit) | Power station / interconnector outages | No |
-| [OSUKED Power Station Dictionary](https://github.com/OSUKED/Power-Station-Dictionary) | Where each power station unit is (MIT licence) | No |
-| [NESO DNO licence areas](https://www.neso.energy/data-portal/gis-boundaries-gb-dno-license-areas) | DNO boundaries | No |
-| [Elexon system warnings (SYSWARN)](https://bmrs.elexon.co.uk/system-warnings) | NESO margin and demand-control notices | No |
-| [Elexon generation by fuel](https://bmrs.elexon.co.uk/generation-by-fuel-type) | Interconnector flows | No |
-| [NESO Carbon Intensity (regional)](https://carbonintensity.org.uk) | Carbon intensity and mix by DNO area | No |
-| [Environment Agency flood monitoring](https://environment.data.gov.uk/flood-monitoring/doc/reference) | Flood warnings (England only) | No |
-| [National Gas Data Portal](https://data.nationalgas.com) | Gas demand, supply, linepack (via Worker) | No |
-| [Met Office warnings](https://www.metoffice.gov.uk/weather/warnings-and-advice/uk-warnings) | Weather warnings (via Worker) | No |
-| [Esri World Dark Gray Canvas](https://www.arcgis.com/home/item.html?id=358ec1e175ea41c3bf5c68f0da11ae2b) | Map tiles | No |
-| [RainViewer](https://www.rainviewer.com/api.html) | Weather radar | No |
-| [Google Gemini](https://ai.google.dev) | AI features | Visitor's own key |
+| Source | Used for | Updates | Via |
+|---|---|---|---|
+| [Elexon Insights (BMRS)](https://bmrs.elexon.co.uk/api-documentation) | Frequency, demand, history, generation by fuel, interconnector flows | 1 min | Direct |
+| [Elexon REMIT](https://bmrs.elexon.co.uk/remit) | Power station and interconnector outages | 5 min | Direct |
+| [Elexon system warnings](https://bmrs.elexon.co.uk/system-warnings) | NESO margin and demand-control notices | 5 min | Direct |
+| [NESO Carbon Intensity](https://carbonintensity.org.uk) | GB and regional mix, carbon intensity | 5 min | Direct |
+| [NESO DNO licence areas](https://www.neso.energy/data-portal/gis-boundaries-gb-dno-license-areas) | DNO boundaries | Each publish | Build |
+| [UK Power Networks](https://ukpowernetworks.opendatasoft.com/explore/dataset/ukpn-live-faults/) | Power cuts | 1 min | Direct |
+| [Northern Powergrid](https://northernpowergrid.opendatasoft.com/explore/dataset/live-power-cuts-data/) | Power cuts | 1 min | Direct |
+| [NGED](https://connecteddata.nationalgrid.co.uk/dataset/live-power-cuts) | Power cuts | 2 min | Worker |
+| [SSEN](https://data.ssen.co.uk/@ssen-distribution/realtime_outage_dataset) | Power cuts | 2 min | Worker |
+| [SP Energy Networks](https://spenergynetworks.opendatasoft.com/explore/dataset/national-energy-outage-data/) | Power cuts | 2 min | Worker (key) |
+| [National Gas](https://data.nationalgas.com) | Gas demand, supply, linepack | 5 min | Worker |
+| [Met Office](https://www.metoffice.gov.uk/weather/warnings-and-advice/uk-warnings) | Weather warnings | 5 min | Worker |
+| [Environment Agency](https://environment.data.gov.uk/flood-monitoring/doc/reference) | Flood warnings (England) | 5 min | Direct |
+| [OpenStreetMap](https://www.openstreetmap.org/copyright) | Infrastructure, place search | Weekly + on zoom | Build / direct |
+| [OSUKED Power Station Dictionary](https://github.com/OSUKED/Power-Station-Dictionary) | Power station unit locations | Each publish | Build |
+| [Esri World Dark Gray Canvas](https://www.arcgis.com/home/item.html?id=358ec1e175ea41c3bf5c68f0da11ae2b) | Map background | Live | Direct |
+| [RainViewer](https://www.rainviewer.com/api.html) | Weather radar | Live | Direct |
+| [Google Gemini](https://ai.google.dev) | AI features (visitor's own key) | On request | Direct |
 
-## Infrastructure snapshot
+Licences and credits: [ATTRIBUTION.md](ATTRIBUTION.md).
 
-Querying OpenStreetMap for the whole of GB is slow and the free public servers are often busy. So each time the site is published (and every Monday), GitHub Actions runs `scripts/build-osm-snapshot.mjs`, which downloads power stations, high-voltage lines, interconnectors and subsea pipelines once and saves them as `data/osm-uk.json` alongside the site. The same step downloads NESO's DNO licence-area boundaries, converts them from British National Grid to latitude/longitude, simplifies them and saves `data/dno-areas.json`. It also saves `data/bmu-locations.json`, a lookup of where each power station unit is, so Elexon's outage notices (which have no map coordinates) can be placed. Units not in the lookup, usually very new stations, are left off the map. Visitors load that file instantly. If the snapshot can't be built, the site still works and tries OpenStreetMap live instead.
+## Roadmap
 
-Power cuts shown are real: from UK Power Networks' and Northern Powergrid's live feeds, plus (if you add a Gemini key) incidents found by AI web search, which are labelled "unverified". Areas whose DNO feed isn't connected (see the system status panel) may still have power cuts.
-
-AI features use Google Gemini with Google Search. Their output is labelled in the app as unverified web-search results; the asset summary deliberately does not speculate about specific sites' suppliers or control systems.
-
-Scenario timelines and impacts are illustrative models, not forecasts. Where a live feed is unavailable, the app falls back to estimated values and records that in the system log.
+1. ~~Phase 1 - real data only, working history charts, help and versioning~~ (v3.1.0)
+2. Phase 2 - every panel movable, resizable and text-size adjustable; layouts for large screens, laptops, tablets, foldables and phones; a consistent icon set
+3. Phase 3 - MapLibre map with weekly-built tiles of every energy asset in GB (solar, batteries, wind, substations, lines, cables, pipes) and how they connect (DNO Embedded Capacity Registers)
+4. Phase 4 - a curated library of realistic risk scenarios in every category, with a transparent, sourced impact model
+5. Phase 5 - weekly research agents that propose new scenarios and sources for review

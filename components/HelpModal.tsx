@@ -1,24 +1,27 @@
 
 import React, { useState } from 'react';
-import { XMarkIcon, BookOpenIcon, ServerStackIcon, CircleStackIcon, ChatBubbleBottomCenterTextIcon, CheckCircleIcon, ExclamationTriangleIcon, XCircleIcon, PlayIcon, ChatBubbleLeftRightIcon, ClipboardDocumentListIcon } from '@heroicons/react/24/solid';
-import { APP_VERSION, BUILD_DATE, ASSET_TYPES, ALL_SOURCES } from '../constants';
+import { XMarkIcon, SparklesIcon, BookOpenIcon, ServerStackIcon, CircleStackIcon, ChatBubbleBottomCenterTextIcon, CheckCircleIcon, ExclamationTriangleIcon, XCircleIcon, PlayIcon, ChatBubbleLeftRightIcon, ClipboardDocumentListIcon } from '@heroicons/react/24/solid';
+import { APP_VERSION, BUILD_DATE, BUILD_COMMIT, ASSET_TYPES } from '../constants';
+import { CHANGELOG } from '../content/changelog';
+import { DATA_SOURCES } from '../content/sources';
 import { getApiSystemStatus, getSystemLogs } from '../services/geminiService';
 
 interface HelpModalProps {
     onClose: () => void;
     onLaunchTour?: () => void;
-    initialTab?: 'guide' | 'assets' | 'sources' | 'status' | 'logs';
+    initialTab?: 'guide' | 'whatsnew' | 'assets' | 'sources' | 'status' | 'logs';
 }
 
 const HelpModal: React.FC<HelpModalProps> = ({ onClose, onLaunchTour, initialTab = 'guide' }) => {
-    const [activeTab, setActiveTab] = useState<'guide' | 'assets' | 'sources' | 'status' | 'logs'>(initialTab);
+    const [activeTab, setActiveTab] = useState<'guide' | 'whatsnew' | 'assets' | 'sources' | 'status' | 'logs'>(initialTab);
     const apiStatuses = getApiSystemStatus();
     const systemLogs = getSystemLogs();
 
     const tabs = [
         { id: 'guide', label: 'User Guide', icon: BookOpenIcon },
+        { id: 'whatsnew', label: "What's new", icon: SparklesIcon },
         { id: 'assets', label: 'Asset Legend', icon: CircleStackIcon },
-        { id: 'sources', label: 'Data Sources', icon: ChatBubbleBottomCenterTextIcon },
+        { id: 'sources', label: 'About & sources', icon: ChatBubbleBottomCenterTextIcon },
         { id: 'status', label: 'System Status', icon: ServerStackIcon },
         { id: 'logs', label: 'System Logs', icon: ClipboardDocumentListIcon },
     ];
@@ -73,7 +76,8 @@ const HelpModal: React.FC<HelpModalProps> = ({ onClose, onLaunchTour, initialTab
                                 <h3 className="text-xs font-bold text-slate-500 uppercase mb-2">Version Info</h3>
                                 <div className="text-xs text-slate-400 font-mono">
                                     <p>v{APP_VERSION}</p>
-                                    <p>{BUILD_DATE}</p>
+                                    <p>Built {BUILD_DATE}</p>
+                                    {BUILD_COMMIT && <p>Commit {BUILD_COMMIT}</p>}
                                 </div>
                             </div>
                         </div>
@@ -83,42 +87,55 @@ const HelpModal: React.FC<HelpModalProps> = ({ onClose, onLaunchTour, initialTab
                     <div className="flex-1 overflow-y-auto p-8 bg-slate-900/50 custom-scrollbar">
                         
                         {activeTab === 'guide' && (
-                            <div className="space-y-8 animate-fadeIn">
-                                <div className="flex justify-between items-start">
+                            <div className="space-y-6 animate-fadeIn">
+                                <div className="flex justify-between items-start gap-4">
                                     <div>
-                                        <h3 className="text-xl font-bold text-white mb-4 border-b border-slate-700 pb-2">Platform Overview</h3>
+                                        <h3 className="text-xl font-bold text-white mb-3 border-b border-slate-700 pb-2">What this is</h3>
                                         <p className="text-slate-300 leading-relaxed max-w-2xl">
-                                            The Energy Sector Resilience & Risk platform is a next-generation simulation tool designed to visualize critical infrastructure dependencies and model the impact of high-impact, low-probability events (HILP).
+                                            A live picture of the GB energy system - infrastructure, power cuts, generator outages, flows and warnings - built only from public open data, with "what if" disruption scenarios on top.
+                                        </p>
+                                        <p className="text-xs text-slate-500 mt-2 max-w-2xl">
+                                            A personal project by Stuart Okin. Not an official product of Ofgem or any other organisation. Live data comes straight from the publishers listed under About &amp; sources; AI features are unverified and labelled as such.
                                         </p>
                                     </div>
                                     {onLaunchTour && (
-                                        <button 
-                                            onClick={onLaunchTour}
-                                            className="px-6 py-3 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-lg shadow-lg flex items-center gap-2 transition-transform hover:scale-105 shadow-cyan-900/20"
-                                        >
-                                            <PlayIcon className="w-5 h-5" /> Start Tour
+                                        <button onClick={onLaunchTour} className="px-5 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-lg shadow-lg flex items-center gap-2 shrink-0">
+                                            <PlayIcon className="w-5 h-5" /> Start tour
                                         </button>
                                     )}
                                 </div>
-
-                                <div className="grid grid-cols-2 gap-6">
-                                    <div className="bg-slate-800/50 p-4 rounded-lg border border-slate-700">
-                                        <h4 className="font-bold text-cyan-400 mb-2">Interactive Mapping</h4>
-                                        <p className="text-sm text-slate-400">Real-time visualization of Generation, Transmission, and Distribution assets overlaid with live outage data.</p>
-                                    </div>
-                                    <div className="bg-slate-800/50 p-4 rounded-lg border border-slate-700">
-                                        <h4 className="font-bold text-red-400 mb-2">Risk Simulation</h4>
-                                        <p className="text-sm text-slate-400">Model scenarios like Cyber Attacks, Storms, or Supply Chain failures to estimate consumer impact and economic cost.</p>
-                                    </div>
-                                    <div className="bg-slate-800/50 p-4 rounded-lg border border-slate-700">
-                                        <h4 className="font-bold text-purple-400 mb-2">AI Analysis</h4>
-                                        <p className="text-sm text-slate-400">Gemini 2.5 powered analysis of grid vulnerabilities, asset criticality, and real-time threat intelligence.</p>
-                                    </div>
-                                    <div className="bg-slate-800/50 p-4 rounded-lg border border-slate-700">
-                                        <h4 className="font-bold text-green-400 mb-2">Multimedia Reporting</h4>
-                                        <p className="text-sm text-slate-400">Generate narrated audio briefings and print-ready reports for stakeholders instantly.</p>
-                                    </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                                    {[
+                                        ['Map and layers', 'text-cyan-400', 'Use the filter (funnel) to choose layers: generation, networks, DNO areas, power cuts, generator outages, interconnector flows, flood and weather warnings. Click anything for details and its source.'],
+                                        ['Live data', 'text-green-400', 'Demand, frequency and the mix refresh every minute; outages, flows and warnings every 5 minutes. If a feed fails, the last real value is shown marked "est." - nothing is made up.'],
+                                        ['History', 'text-yellow-400', 'Click Grid Demand or Frequency for real Elexon history (24 hours to a year for demand; 24 hours or 7 days for frequency).'],
+                                        ['Scenarios', 'text-red-400', 'Run "what if" scenarios to see illustrative impacts over time. Scenario figures are modelled assumptions, not forecasts.'],
+                                        ['AI features (optional)', 'text-purple-400', 'Add your own free Gemini key (AI: Off, top bar) for the analyst, AI summaries and AI scenarios. AI output comes from web search and is not verified.'],
+                                        ['System status', 'text-slate-300', 'The green dot by the region shows whether every data source answered. Details are under System Status.'],
+                                    ].map(([t, c, d]) => (
+                                        <div key={t} className="bg-slate-800/50 p-4 rounded-lg border border-slate-700">
+                                            <h4 className={`font-bold mb-1 ${c}`}>{t}</h4>
+                                            <p className="text-slate-400">{d}</p>
+                                        </div>
+                                    ))}
                                 </div>
+                            </div>
+                        )}
+
+                        {activeTab === 'whatsnew' && (
+                            <div className="animate-fadeIn space-y-6">
+                                <h3 className="text-xl font-bold text-white border-b border-slate-700 pb-2">What's new</h3>
+                                {CHANGELOG.map(entry => (
+                                    <div key={entry.version} className="bg-slate-800/40 border border-slate-700 rounded-lg p-4">
+                                        <div className="flex items-baseline justify-between gap-3 mb-2">
+                                            <h4 className="font-bold text-white">v{entry.version} - {entry.title}</h4>
+                                            <span className="text-xs text-slate-500 shrink-0">{new Date(entry.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                                        </div>
+                                        <ul className="list-disc list-inside space-y-1 text-sm text-slate-300">
+                                            {entry.changes.map((c, i) => <li key={i}>{c}</li>)}
+                                        </ul>
+                                    </div>
+                                ))}
                             </div>
                         )}
 
@@ -144,18 +161,22 @@ const HelpModal: React.FC<HelpModalProps> = ({ onClose, onLaunchTour, initialTab
 
                         {activeTab === 'sources' && (
                             <div className="animate-fadeIn">
-                                <h3 className="text-xl font-bold text-white mb-6 border-b border-slate-700 pb-2">Data Integrity & Sources</h3>
-                                <p className="text-slate-400 mb-6">
-                                    This platform aggregates data from public open-source intelligence (OSINT), official regulatory bodies, and real-time API feeds.
+                                <h3 className="text-xl font-bold text-white mb-3 border-b border-slate-700 pb-2">About &amp; sources</h3>
+                                <p className="text-slate-400 mb-5 text-sm">
+                                    Every figure comes from one of these public sources. Where the app models or estimates something (for example scenario impacts), it says so and gives the reasoning or source next to the figure.
                                 </p>
-                                <ul className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                    {ALL_SOURCES.map((source, i) => (
-                                        <li key={i} className="flex items-center gap-3 text-sm text-slate-300 bg-slate-950/50 p-3 rounded border border-slate-800">
-                                            <CheckCircleIcon className="w-4 h-4 text-cyan-500 shrink-0" />
-                                            {source}
-                                        </li>
+                                <div className="space-y-2">
+                                    {DATA_SOURCES.map(src => (
+                                        <div key={src.name} className="bg-slate-950/50 p-3 rounded border border-slate-800 text-sm">
+                                            <div className="flex justify-between gap-3 flex-wrap">
+                                                <a href={src.url} target="_blank" rel="noopener noreferrer" className="font-bold text-cyan-400 hover:underline">{src.name}</a>
+                                                <span className="text-xs text-slate-500">{src.licence}</span>
+                                            </div>
+                                            <div className="text-slate-300">{src.usedFor}</div>
+                                            <div className="text-xs text-slate-500">Updates: {src.refresh}{src.via ? ` · via ${src.via}` : ''}</div>
+                                        </div>
                                     ))}
-                                </ul>
+                                </div>
                             </div>
                         )}
 
