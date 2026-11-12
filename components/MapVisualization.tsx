@@ -3,7 +3,8 @@
 //   Energy infrastructure: vector tiles built weekly from OpenStreetMap (public/tiles/energy.pmtiles,
 //     see scripts/energy-tiles.yml). If the tiles aren't there yet, the weekly OSM snapshot is shown instead.
 //   Live layers (power cuts, generator outages, flows, warnings) are HTML markers on top.
-// Click a substation to highlight the lines that connect to it.
+// Click a substation to highlight the lines that connect to it, and see which generators and
+// batteries the public connection registers say connect there (services/connections.ts).
 import React, { useEffect, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -13,6 +14,7 @@ import { ASSET_TYPES } from '../constants';
 import { InterconnectorFlow, RegionalCarbon, FloodWarning, WeatherWarning } from '../services/liveSystems';
 import { markOk, markFail } from '../services/health';
 import { iconSvg, dotSvg, powerCutSvg, voltageColour, ASSET_ICON } from './icons';
+import { loadConnections, connectionsAt, tecForStation, normaliseSubName, sameAsSite, ConnectionsData, FUEL_LABEL, FUEL_COLOUR, ECR_SOURCE_LABEL } from '../services/connections';
 import { PlusIcon, MinusIcon } from '@heroicons/react/24/solid';
 
 interface MapProps {
@@ -104,6 +106,25 @@ const popupHtml = (title: string, rows: [string, any][], source: string) =>
 
 const fmtVoltage = (v: any) => String(v || '').split(';').map(x => { const n = parseInt(x, 10); return isNaN(n) ? '' : n >= 1000 ? `${n / 1000} kV` : `${n} V`; }).filter(Boolean).join(' / ');
 
+const mwFmt = (n: number) => n >= 100 ? `${Math.round(n).toLocaleString()} MW` : `${Math.round(n * 10) / 10} MW`;
+const CONN_NOTE = 'Matched to this substation by name, so may be incomplete where names differ.';
+
+// "What connects here" section for a substation popup
+const connectionsHtml = (data: ConnectionsData | null, name: string) => {
+    if (!name) return '';
+    const c = connectionsAt(data, name);
+    if (!c) return data ? `<div style="font-size:10px;margin-top:6px;color:#64748b">No generators found for this name in the public connection registers.</div>` : '';
+    const fuels = Object.entries(c.byFuel).filter(([, mw]) => mw > 0).sort((a, b) => b[1] - a[1]);
+    const top = [...c.connected.map(e => ({ n: e.site.site, mw: e.site.mw, f: e.site.fuel, via: e.level })), ...c.tecBuilt.map(t => ({ n: t.project, mw: t.mwConnected, f: '', via: 'Transmission' }))]
+        .sort((a, b) => b.mw - a.mw).slice(0, 6);
+    return `<div style="margin-top:6px;border-top:1px solid #334155;padding-top:6px;font-size:11px">` +
+        `<div style="font-weight:bold">Connected generation and storage: ${mwFmt(c.connectedMW)}</div>` +
+        (fuels.length ? `<div style="display:flex;flex-wrap:wrap;gap:2px 8px;margin:2px 0">${fuels.map(([f, mw]) => `<span><span style="color:${FUEL_COLOUR[f] || '#94a3b8'}">●</span> ${esc(FUEL_LABEL[f] || f)} ${mwFmt(mw)}</span>`).join('')}</div>` : '') +
+        top.map(t => `<div style="color:#cbd5e1">· ${esc(t.n)} <span style="color:#94a3b8">${mwFmt(t.mw)}${t.via !== 'Transmission' ? ` (via ${t.via})` : ''}</span></div>`).join('') +
+        (c.queueMW > 0 ? `<div style="margin-top:3px;color:#fbbf24">In the connection queue: ${mwFmt(c.queueMW)} (${c.accepted.length + c.tecQueue.length} projects)</div>` : '') +
+        `<div style="color:#64748b;font-size:9px;margin-top:4px">Source: ${c.sources.map(esc).join('; ')}. ${CONN_NOTE}</div></div>`;
+};
+
 const OSM_LAYERS = ['osm-plants-icon', 'osm-plants-fill', 'osm-substations-icon', 'osm-substations-fill', 'osm-generators', 'osm-generators-fill', 'osm-lines', 'osm-cables', 'osm-gas', 'osm-gas-sites', 'osm-demand'];
 
 const MapVisualization: React.FC<MapProps> = ({
@@ -118,6 +139,7 @@ const MapVisualization: React.FC<MapProps> = ({
     const markersRef = useRef<Record<string, maplibregl.Marker[]>>({});
     const popupRef = useRef<maplibregl.Popup | null>(null);
     const lastScenarioId = useRef<string | null>(null);
+    const connRef = useRef<ConnectionsData | null>(null);
 
     // Latest props for event handlers
     const propsRef = useRef({ assets, onAssetSelect, onViewChange, regionalCarbon });
@@ -142,6 +164,62 @@ const MapVisualization: React.FC<MapProps> = ({
         const feats = layers.length ? map.queryRenderedFeatures([[pt.x - r, pt.y - r], [pt.x + r, pt.y + r]], { layers }) : [];
         (map.getSource('highlight') as maplibregl.GeoJSONSource)?.setData({ type: 'FeatureCollection', features: feats.map(f => ({ type: 'Feature', properties: {}, geometry: (f as any).geometry })) } as any);
         return feats.length;
+    };
+
+    // Draw thin lines from a substation to the register sites that connect to it
+    const drawFeeders = (name: string, at: maplibregl.LngLat) => {
+        const map = mapRef.current!;
+        const c = connectionsAt(connRef.current, name);
+        const src = map.getSource('conn-lines') as maplibregl.GeoJSONSource | undefined;
+        if (!src) return;
+        const sites = c ? c.connected.concat(c.accepted).map(e => e.site) : [];
+        src.setData({ type: 'FeatureCollection', features: sites.map(s => ({ type: 'Feature', properties: { color: FUEL_COLOUR[s.fuel] || '#94a3b8', connected: s.connected }, geometry: { type: 'LineString', coordinates: [[at.lng, at.lat], [s.lng, s.lat]] } })) } as any);
+    };
+
+    // Find a substation on the map by name (from loaded tiles), nearest to a point
+    const findSubstation = (name: string, near: [number, number]): [number, number] | null => {
+        const map = mapRef.current!;
+        if (!map.getSource('energy') || !name) return null;
+        const k = normaliseSubName(name);
+        let best: [number, number] | null = null, bestD = 0.6; // ~40-60 km in degrees
+        for (const f of map.querySourceFeatures('energy', { sourceLayer: 'substations' }) as any[]) {
+            if (!f.properties?.name || normaliseSubName(f.properties.name) !== k) continue;
+            const g = f.geometry;
+            const pt = g.type === 'Point' ? g.coordinates : g.type === 'Polygon' ? g.coordinates[0][0] : g.type === 'MultiPolygon' ? g.coordinates[0][0][0] : null;
+            if (!pt) continue;
+            const d = Math.hypot(pt[0] - near[0], (pt[1] - near[1]) * 1.6);
+            if (d < bestD) { bestD = d; best = [pt[0], pt[1]]; }
+        }
+        return best;
+    };
+
+    const ecrPopup = (e: any) => {
+        const p = e.features?.[0]?.properties;
+        if (!p) return;
+        const here: [number, number] = [e.lngLat.lng, e.lngLat.lat];
+        const seen = new Set<string>();
+        const chain = [['Primary', p.primary], ['Bulk supply point', p.bsp], ['Grid supply point', p.gsp]].filter(([, v]) => {
+            const k = normaliseSubName(v);
+            if (!k || seen.has(k) || sameAsSite(v, p.site)) return false;
+            seen.add(k); return true;
+        });
+        const feats: any[] = [];
+        let from = here;
+        const found: string[] = [];
+        for (const [level, name] of chain) {
+            const at = findSubstation(name, from);
+            if (at) { feats.push({ type: 'Feature', properties: { color: '#ffffff', connected: true }, geometry: { type: 'LineString', coordinates: [from, at] } }); from = at; found.push(level); }
+        }
+        (mapRef.current!.getSource('conn-lines') as maplibregl.GeoJSONSource)?.setData({ type: 'FeatureCollection', features: feats } as any);
+        const rows: [string, any][] = [
+            ['Type', `${FUEL_LABEL[p.fuel] || p.fuel}${p.technology && !/^data/i.test(p.technology) ? ` (${p.technology})` : ''}`],
+            ['Capacity', mwFmt(+p.mw)],
+            ['Status', p.connected ? 'Connected' : 'Accepted to connect (not yet built)'],
+            ['Connection voltage', p.kV ? `${p.kV} kV` : ''],
+            ...chain.map(([l, n]) => [`Connects via ${l}`, n] as [string, any]),
+        ];
+        const note = chain.length ? (found.length ? `Route to ${found.join(' → ')} drawn where the substation is on the map (matched by name).` : 'Zoom in near the substations to draw the route.') : '';
+        showPopup(e.lngLat, popupHtml(p.site, rows, `Source: ${esc(ECR_SOURCE_LABEL[p.dno] || p.dno)}. ${note}`));
     };
 
     // ---------- Vector tile layers (all OSM energy infrastructure) ----------
@@ -181,11 +259,14 @@ const MapVisualization: React.FC<MapProps> = ({
             if (layer.startsWith('osm-plants')) {
                 title = title || `${p['plant:source'] || ''} power station`;
                 rows = [['Fuel / source', p['plant:source']], ['Capacity', p['plant:output:electricity']], ['Operator', p.operator], ['Opened', p.start_date], ['Method', p['plant:method']]];
+                const t = tecForStation(connRef.current, p.name);
+                if (t) extra = `<div style="margin-top:6px;border-top:1px solid #334155;padding-top:6px;font-size:11px"><div>Grid connection: <b>${esc(t.site)}</b></div><div style="color:#94a3b8">${esc(t.plantType)} · ${mwFmt(t.mwConnected || t.mwTotal)} · ${esc(t.status)}${t.hostTO ? ` · ${esc(t.hostTO)}` : ''}</div><div style="color:#64748b;font-size:9px;margin-top:2px">Source: NESO ${t.register === 'T' ? 'TEC' : 'Embedded'} Register, project "${esc(t.project)}" (matched by name)</div></div>`;
             } else if (layer.startsWith('osm-substations')) {
                 title = title || (p.power === 'converter' ? 'HVDC converter station' : 'Substation');
                 rows = [['Type', p.substation || p.power], ['Voltage', fmtVoltage(p.voltage)], ['Operator', p.operator], ['Reference', p.ref]];
                 const n = highlightConnected(e.lngLat);
-                extra = `<div style="font-size:11px;margin-top:4px;color:#e2e8f0">${n ? `${n} connected line section${n === 1 ? '' : 's'} highlighted` : 'Zoom in further to see connecting lines'}</div>`;
+                extra = `<div style="font-size:11px;margin-top:4px;color:#e2e8f0">${n ? `${n} connected line section${n === 1 ? '' : 's'} highlighted` : 'Zoom in further to see connecting lines'}</div>` + connectionsHtml(connRef.current, p.name);
+                drawFeeders(p.name, e.lngLat);
             } else if (layer.startsWith('osm-generators')) {
                 title = title || `${p['generator:source'] || ''} generator`;
                 rows = [['Source', p['generator:source']], ['Type', p['generator:type'] || p['generator:method']], ['Output', p['generator:output:electricity']], ['Operator', p.operator]];
@@ -269,6 +350,31 @@ const MapVisualization: React.FC<MapProps> = ({
             map.addSource('highlight', { type: 'geojson', data: emptyFC as any });
             map.addLayer({ id: 'highlight', type: 'line', source: 'highlight', paint: { 'line-color': '#ffffff', 'line-width': 5, 'line-opacity': 0.55, 'line-blur': 1 } });
 
+            // Connection registers: DNO-connected generators / batteries (1 MW+) and the lines to their substations
+            map.addSource('conn-lines', { type: 'geojson', data: emptyFC as any });
+            map.addLayer({ id: 'conn-lines', type: 'line', source: 'conn-lines', paint: { 'line-color': ['get', 'color'], 'line-width': 1.5, 'line-opacity': ['case', ['to-boolean', ['get', 'connected']], 0.85, 0.45], 'line-dasharray': [2, 2] } });
+            map.addSource('ecr', { type: 'geojson', data: emptyFC as any });
+            map.addLayer({ id: 'ecr', type: 'circle', source: 'ecr', minzoom: 7,
+                paint: {
+                    'circle-radius': ['interpolate', ['linear'], ['zoom'], 7, ['interpolate', ['linear'], ['get', 'mw'], 1, 1.5, 50, 3.5, 300, 6], 13, ['interpolate', ['linear'], ['get', 'mw'], 1, 4, 50, 8, 300, 12]],
+                    'circle-color': ['case', ['to-boolean', ['get', 'connected']], ['get', 'color'], 'rgba(0,0,0,0)'],
+                    'circle-stroke-color': ['get', 'color'], 'circle-stroke-width': ['case', ['to-boolean', ['get', 'connected']], 0.6, 1.4],
+                    'circle-opacity': 0.8,
+                } });
+            loadConnections().then(data => {
+                connRef.current = data;
+                if (!data) return;
+                (map.getSource('ecr') as maplibregl.GeoJSONSource)?.setData({ type: 'FeatureCollection', features: data.ecr.map(s => ({
+                    type: 'Feature', geometry: { type: 'Point', coordinates: [s.lng, s.lat] },
+                    properties: { ...s, color: FUEL_COLOUR[s.fuel] || '#94a3b8' },
+                })) } as any);
+            });
+            map.on('click', 'ecr', (e: any) => {
+                if (e.originalEvent.__erHandled) return;
+                e.originalEvent.__erHandled = true;
+                ecrPopup(e);
+            });
+
             map.addSource('assets', { type: 'geojson', data: emptyFC as any });
             map.addLayer({
                 id: 'assets', type: 'symbol', source: 'assets',
@@ -305,6 +411,7 @@ const MapVisualization: React.FC<MapProps> = ({
             map.on('click', (e: any) => {
                 if (e.originalEvent.__erHandled) return;
                 (map.getSource('highlight') as maplibregl.GeoJSONSource)?.setData(emptyFC as any);
+                (map.getSource('conn-lines') as maplibregl.GeoJSONSource)?.setData(emptyFC as any);
                 const dno = map.queryRenderedFeatures(e.point, { layers: ['dno-fill'] })[0];
                 if (!dno || map.getLayoutProperty('dno-fill', 'visibility') === 'none') return;
                 const p: any = dno.properties || {};
@@ -312,7 +419,7 @@ const MapVisualization: React.FC<MapProps> = ({
                 const ciHtml = ci ? `<div style="margin-top:6px;border-top:1px solid #334155;padding-top:6px"><div>Carbon intensity: <b>${ci.intensity} gCO2/kWh</b> (${esc(ci.index)})</div><div style="color:#94a3b8;font-size:11px">Local mix: ${ci.mix.slice(0, 4).map(m => `${esc(m.fuel)} ${m.perc}%`).join(', ')}</div><div style="color:#64748b;font-size:9px;margin-top:2px">Source: NESO Carbon Intensity API (live forecast)</div></div>` : '';
                 showPopup(e.lngLat, `<div style="padding:10px 12px;min-width:220px"><b>${esc(p.name)}</b><br><span style="color:#94a3b8">${esc(p.operator)}</span>${ciHtml}</div>`);
             });
-            ['assets', 'asset-lines', 'asset-lines-dashed', ...OSM_LAYERS].forEach(l => {
+            ['assets', 'asset-lines', 'asset-lines-dashed', 'ecr', ...OSM_LAYERS].forEach(l => {
                 if (!map.getLayer(l)) return;
                 map.on('mouseenter', l, () => { map.getCanvas().style.cursor = 'pointer'; });
                 map.on('mouseleave', l, () => { map.getCanvas().style.cursor = ''; });
@@ -337,7 +444,7 @@ const MapVisualization: React.FC<MapProps> = ({
         if (!map || !ready) return;
         const vis = (layer: string, on: boolean) => { if (map.getLayer(layer)) map.setLayoutProperty(layer, 'visibility', on ? 'visible' : 'none'); };
         const gen = filters.has('Generation'), tx = filters.has('Transmission'), dx = filters.has('Distribution');
-        ['osm-plants-fill', 'osm-plants-icon', 'osm-generators', 'osm-generators-fill'].forEach(l => vis(l, gen));
+        ['osm-plants-fill', 'osm-plants-icon', 'osm-generators', 'osm-generators-fill', 'ecr'].forEach(l => vis(l, gen));
         vis('osm-lines', tx || dx);
         if (map.getLayer('osm-lines')) {
             const parts: any[] = [];

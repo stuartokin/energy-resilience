@@ -89,6 +89,7 @@ export const getApiSystemStatus = () => {
         row("Generation mix (NESO / Elexon)", 'mix', "Generation Mix"),
         row("Energy map tiles", 'tiles', "OpenStreetMap, built weekly"),
         row("Infrastructure snapshot", 'snapshot', "OpenStreetMap (built each publish)"),
+        row("Connection registers", 'connections', "NESO TEC + DNO capacity registers (built each publish)"),
         row("OpenStreetMap live (Overpass)", 'overpass', "Local detail when zoomed in"),
         row("Esri Dark Gray Canvas", 'basemap', "Map Tiles", 'Public'),
         row("RainViewer", 'radar', "Weather Radar", 'Public'),

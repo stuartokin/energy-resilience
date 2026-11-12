@@ -3,6 +3,12 @@
 Newest first. Mirrored in the app under **Help → What's new** (`content/changelog.ts`).
 Versioning: MAJOR = big change in what the app is; MINOR = new features or data sources; PATCH = fixes.
 
+## 3.4.0 - 2026-11-12 - Phase 3 (part 2): who connects where
+- `scripts/build-connections.mjs` builds `data/connections.json` on each publish from the NESO TEC and Embedded Registers and the openly licensed DNO Embedded Capacity Registers (NPg; SPEN and UKPN when `SPEN_API_KEY` / `UKPN_API_KEY` GitHub secrets are set). Sites under 1 MW and all personal fields (customer names, MPANs, addresses) are dropped.
+- Map: ECR site layer (fuel colour, MW size, connected vs accepted); site popup with Primary/BSP/GSP chain and route drawn to matched substations; substation popup lists connected MW by fuel, top sites and queue; power station popup shows TEC connection site.
+- `services/connections.ts`: loading, name normalisation and matching (labelled as name-matched in every popup).
+- NGED and ENWL ECRs excluded ("Shared" licences).
+
 ## 3.3.2 - 2026-11-12
 - Interconnectors, subsea/OFTO cables and gas pipelines visible at national zoom again; tiles include subsea cables from z3 and pipelines from z4.
 - Start-up panels: Regional Network + Live Outages (all screens), Live Systems on >= 1600 px; Data Sync minimised. UK fitted between panels.

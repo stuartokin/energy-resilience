@@ -6,6 +6,18 @@ export interface ChangeEntry { version: string; date: string; title: string; cha
 
 export const CHANGELOG: ChangeEntry[] = [
     {
+        version: '3.4.0',
+        date: '2026-11-12',
+        title: 'Phase 3 (part 2): which generators and batteries connect to which substation',
+        changes: [
+            'New layer: generator and battery sites of 1 MW and above from the DNO Embedded Capacity Registers (filled circles = connected, rings = accepted but not yet built; colour = fuel, size = MW). Shown with the Generation layer from zoom 7.',
+            'Click a site to see its type, capacity, status, connection voltage and the Primary → Bulk Supply Point → Grid Supply Point it connects through; the route is drawn to those substations where they are on the map.',
+            'Click a substation to see the generation and storage the registers say connects there (by fuel), the biggest sites, and how much is waiting in the connection queue, with lines drawn to each site.',
+            'Click a power station to see its transmission connection site from the NESO TEC Register.',
+            'Sources: NESO TEC and Embedded Registers (all GB), Northern Powergrid ECR; SP Energy Networks and UK Power Networks ECRs when their free API keys are added as GitHub secrets. NGED and ENWL publish theirs under "Shared" licences, so they are not used. Matching is by substation name and is labelled as such.',
+        ],
+    },
+    {
         version: '3.3.2',
         date: '2026-11-12',
         title: 'Offshore links back at national zoom; tidier start-up layout',

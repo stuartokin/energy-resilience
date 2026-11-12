@@ -6,10 +6,12 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { buildDnoAreas } from './build-dno-areas.mjs';
 import { buildBmuLocations } from './build-bmu-locations.mjs';
+import { buildConnections } from './build-connections.mjs';
 
 // 1. DNO licence-area boundaries (small, quick). Failure here never blocks the rest.
 try { await buildDnoAreas(); } catch (e) { console.warn('DNO boundaries skipped:', e.message); }
 try { await buildBmuLocations(); } catch (e) { console.warn('BM unit locations skipped:', e.message); }
+try { await buildConnections(); } catch (e) { console.warn('Connection registers skipped:', e.message); }
 
 // 2. OpenStreetMap infrastructure snapshot.
 

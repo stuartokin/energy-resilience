@@ -37,6 +37,8 @@ A live picture of the GB energy system - infrastructure, power cuts, generator o
 | `scripts/build-osm-snapshot.mjs` | Run by GitHub Actions on each publish and weekly. Builds `data/osm-uk.json` (OpenStreetMap infrastructure) and calls the two scripts below. |
 | `scripts/build-dno-areas.mjs`, `scripts/dno-geometry.mjs` | Download NESO's DNO boundaries, convert from British National Grid, simplify → `data/dno-areas.json`. |
 | `scripts/build-bmu-locations.mjs` | Power station unit locations → `data/bmu-locations.json` (places REMIT outages on the map). |
+| `scripts/build-connections.mjs` | Which generators and batteries connect to which substation → `data/connections.json` (NESO TEC/Embedded Registers + DNO Embedded Capacity Registers). |
+| `services/connections.ts` | Reads `connections.json` and matches register entries to map substations by name. |
 | `.github/workflows/deploy.yml` | Builds and publishes the site on every upload to `main`, and every Monday. |
 | `CHANGELOG.md` | Version history. |
 | `CLAUDE.md` | Rules for AI agents working on this repo (honesty, sources, style). |
@@ -47,7 +49,8 @@ A live picture of the GB energy system - infrastructure, power cuts, generator o
 ```
  Visitor's browser ──► GitHub Pages (this app)
         │                  ├─ tiles/energy.pmtiles ◄── built weekly by GitHub Actions (Planetiler + OpenStreetMap UK extract)
-        │                  └─ data/*.json  ◄── built on each publish (OpenStreetMap snapshot, NESO, Power Station Dictionary)
+        │                  └─ data/*.json  ◄── built on each publish (OpenStreetMap snapshot, NESO boundaries + TEC register,
+        │                                      DNO capacity registers, Power Station Dictionary)
         ├──► Elexon, NESO, UKPN, Northern Powergrid, Environment Agency   (read directly, every 1-5 min)
         ├──► Cloudflare Worker ──► NGED, SSEN, SPEN, National Gas, Met Office   (cached 2 min)
         └──► Google Gemini (only if the visitor adds their own key)
@@ -84,6 +87,7 @@ The key stays in that browser and is sent only to Google. Click **Remove** to de
 1. Create `.github/workflows/deploy.yml` (contents below).
 2. **Settings → Pages → Source: GitHub Actions.**
 3. Wait for the green tick on **Actions**. The site is at `https://stuartokin.github.io/energy-resilience/`.
+4. Optional, for more connection data: add free API keys as **Settings → Secrets and variables → Actions → New repository secret**: `SPEN_API_KEY` (the same key the Worker uses) and `UKPN_API_KEY` (free account at ukpowernetworks.opendatasoft.com → profile → API keys). They are only used while building and never appear on the site.
 
 ```yaml
 name: Deploy to GitHub Pages
@@ -113,9 +117,38 @@ jobs:
         with:
           node-version: 20
       - run: npm install
-      - name: Build OpenStreetMap infrastructure snapshot
+
+      # ---- Energy map tiles: every OSM power and gas asset in the UK (rebuilt once a week) ----
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Week number
+        id: week
+        run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+      - name: Reuse this week's energy tiles if already built
+        id: tiles
+        uses: actions/cache@v4
+        with:
+          path: public/tiles
+          key: energy-tiles-${{ steps.week.outputs.week }}-${{ hashFiles('scripts/energy-tiles.yml') }}
+      - name: Build energy tiles from OpenStreetMap
+        if: steps.tiles.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 60
+        run: |
+          curl -sSL -o planetiler.jar https://github.com/onthegomap/planetiler/releases/latest/download/planetiler.jar
+          java -Xmx12g -jar planetiler.jar generate-custom --schema=scripts/energy-tiles.yml --output=energy.pmtiles --download --force
+          # Only publish (and cache) the tiles if the build succeeded
+          mkdir -p public/tiles && mv energy.pmtiles public/tiles/ && ls -lh public/tiles
+
+      - name: Build OpenStreetMap snapshot and connection registers
         run: node scripts/build-osm-snapshot.mjs
         continue-on-error: true
+        env:
+          # Optional free keys for two DNO connection registers (skipped if not set). Never shown on the site.
+          SPEN_API_KEY: ${{ secrets.SPEN_API_KEY }}
+          UKPN_API_KEY: ${{ secrets.UKPN_API_KEY }}
         timeout-minutes: 20
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
@@ -171,6 +204,8 @@ Needs [Node.js](https://nodejs.org) 20+. Run `npm install`, then `npm run dev`, 
 | [Environment Agency](https://environment.data.gov.uk/flood-monitoring/doc/reference) | Flood warnings (England) | 5 min | Direct |
 | [OpenStreetMap](https://www.openstreetmap.org/copyright) | Infrastructure, place search | Weekly + on zoom | Build / direct |
 | [OSUKED Power Station Dictionary](https://github.com/OSUKED/Power-Station-Dictionary) | Power station unit locations | Each publish | Build |
+| [NESO TEC / Embedded Register](https://www.neso.energy/data-portal/transmission-entry-capacity-tec-register) | Transmission connection site of large generators and batteries | Each publish | Build |
+| DNO Embedded Capacity Registers: [NPg](https://northernpowergrid.opendatasoft.com/explore/dataset/embedded-capacity-register/), [SPEN](https://spenergynetworks.opendatasoft.com/explore/dataset/embedded-capacity-register/) (key), [UKPN](https://ukpowernetworks.opendatasoft.com/explore/dataset/ukpn-embedded-capacity-register/) (key) | Generators/batteries ≥1 MW and their Primary, BSP and GSP | Each publish | Build |
 | [Esri World Dark Gray Canvas](https://www.arcgis.com/home/item.html?id=358ec1e175ea41c3bf5c68f0da11ae2b) | Map background | Live | Direct |
 | [RainViewer](https://www.rainviewer.com/api.html) | Weather radar | Live | Direct |
 | [Google Gemini](https://ai.google.dev) | AI features (visitor's own key) | On request | Direct |
@@ -181,6 +216,6 @@ Licences and credits: [ATTRIBUTION.md](ATTRIBUTION.md).
 
 1. ~~Phase 1 - real data only, working history charts, help and versioning~~ (v3.1.0)
 2. ~~Phase 2 - movable, resizable, text-size adjustable panels; layouts for every screen; new icon set~~ (v3.2.0)
-3. ~~Phase 3 part 1 - MapLibre map with weekly tiles of every UK energy asset; substation connections~~ (v3.3.0). Part 2 - which generators connect to which substation (DNO Embedded Capacity Registers)
+3. ~~Phase 3 part 1 - MapLibre map with weekly tiles of every UK energy asset; substation connections~~ (v3.3.0). ~~Part 2 - which generators connect to which substation~~ (v3.4.0)
 4. Phase 4 - a curated library of realistic risk scenarios in every category, with a transparent, sourced impact model
 5. Phase 5 - weekly research agents that propose new scenarios and sources for review

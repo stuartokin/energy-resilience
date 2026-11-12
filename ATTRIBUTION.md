@@ -17,9 +17,13 @@ This app displays data from the sources below. Each is credited in the app (map 
 | Environment Agency flood monitoring API | Open Government Licence v3.0 | "Environment Agency" |
 | OpenStreetMap (via Overpass and Nominatim) | ODbL 1.0 | "© OpenStreetMap contributors" on the map |
 | OSUKED Power Station Dictionary | MIT | Help → About & sources |
+| NESO TEC Register, Embedded Register | NESO Open Data Licence | "NESO TEC / Embedded Register" in popups |
+| Northern Powergrid Embedded Capacity Register | Northern Powergrid Open Data Licence v1.0 | "Northern Powergrid Embedded Capacity Register" in popups |
+| SP Energy Networks Embedded Capacity Register | CC BY 4.0 | "SP Energy Networks Embedded Capacity Register" in popups |
+| UK Power Networks Embedded Capacity Register | CC BY 4.0 | "UK Power Networks Embedded Capacity Register" in popups |
 | Esri World Dark Gray Canvas | Esri terms of use | "Basemap © Esri, HERE, Garmin" on the map |
 | RainViewer | RainViewer API terms | "Radar © RainViewer" on the map |
 
-Not used: Electricity North West outage data (classified "Shared": public bodies only, restricted licence).
+Not used: Electricity North West outage data and Embedded Capacity Register, and NGED's Embedded Capacity Register (classified "Shared": restricted licences that don't allow republishing on a public site).
 
 Software libraries are listed in `package.json` (React, Leaflet, Recharts, Heroicons, Google GenAI SDK - all open-source licences).
