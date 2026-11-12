@@ -5,6 +5,7 @@ import { ASSET_TYPES, DEEP_SEARCH_PROTOCOLS, REGIONS, UK_DNO_REGIONS } from '../
 import { getAiKey, onAiKeyChange, requestAiKey } from './aiKey';
 import { OUTAGE_WORKER_URL } from '../config';
 import { markOk, markFail, statusOf } from './health';
+import { buildTimeline, describeProfile, profileOf, methodNote } from './impactModel';
 
 let aiClient: GoogleGenAI | null = null;
 let isAudioQuotaExceeded = false;
@@ -916,8 +917,12 @@ export const generateCustomScenario = async (userQuery: string, region: string):
             "affectedDistricts": ["Town A", "City District B"],
             "locations": [{"name": "Site A", "lat": 51.5, "lng": -0.1}, {"name": "Site B", "lat": 52.0, "lng": -1.5}] (Optional, for specific impact points),
             "narrative": "Detailed narrative.",
-            "sources": ["Source 1"]
+            "sources": ["Source title - URL"],
+            "rationale": "Why these numbers: the reference event and source, or 'my judgement' where it is an assumption"
         }
+
+    RULES: Keep scenarios generic - do not name equipment suppliers, and do not name specific real sites as targets of attack.
+    Base "peakConsumersAffected" and "durationDays" on a real past event where possible, and explain how in "rationale" (name the event and source). If a number is your own judgement, say so in "rationale". Never invent statistics.
     `;
     try {
         const response = await aiClient.models.generateContent({
@@ -937,6 +942,7 @@ export const generateCustomScenario = async (userQuery: string, region: string):
         return {
             id: `custom_${Date.now()}`,
             ...json,
+            rationale: `AI draft (not checked): ${json.rationale || 'no reasoning given'}. Impact over time uses the simple default shape.`,
             coordinates: coords,
             affectedAssets: [], region: region, lastUpdated: Date.now(), status: 'New'
         };
@@ -1156,7 +1162,12 @@ export const generateRiskScenarios = async (regionName: string, assets: Infrastr
     const assetContext = assets.filter(a => ['nuclear', 'gas', 'substation', 'wind_offshore'].includes(a.typeId)).slice(0, 8).map(a => `ID:${a.id} Name:${a.name} Type:${a.typeId}`).join(", ");
     const prompt = `Generate 8 detailed energy risk scenarios for ${regionName}. Asset Context: ${assetContext}. REQUIRED: Cyber, Asset Failure, Storm, Supply Chain.
     Structure the response as a JSON Array.
-    Ensure scenarios include a 'locations' array if they affect specific multiple sites (e.g. coordinated attacks). Format: locations: [{name, lat, lng}].`;
+    Ensure scenarios include a 'locations' array if they affect specific multiple sites (e.g. coordinated attacks). Format: locations: [{name, lat, lng}].
+    Each item also needs "rationale" (why these numbers) and "sources" (["title - URL"]).
+
+    RULES: Keep scenarios generic - do not name equipment suppliers, and do not name specific real sites as targets of attack.
+    Base "peakConsumersAffected" and "durationDays" on a real past event where possible, and explain how in "rationale" (name the event and source). If a number is your own judgement, say so in "rationale". Never invent statistics.
+`;
     try {
         const response = await aiClient.models.generateContent({
             model: 'gemini-2.5-flash',
@@ -1181,7 +1192,8 @@ export const generateRiskScenarios = async (regionName: string, assets: Infrastr
                 narrative: r.narrative || "No details provided.",
                 lastUpdated: Date.now(),
                 status: 'New',
-                sources: r.sources || ["AI Analysis"]
+                sources: r.sources || ["AI Analysis"],
+                rationale: `AI draft (not checked): ${r.rationale || 'no reasoning given'}. Impact over time uses the simple default shape.`,
             }));
         }
     } catch (e: any) { 
@@ -1191,52 +1203,8 @@ export const generateRiskScenarios = async (regionName: string, assets: Infrastr
     return [];
 };
 
-export const calculateScenarioImpact = async (scenario: RiskScenario): Promise<TimelineStep[]> => {
-    if (!aiClient) initGenAI();
-    const steps: TimelineStep[] = [];
-    const peak = scenario.peakConsumersAffected;
-    const duration = scenario.durationDays;
-    
-    if (scenario.category === 'Growth') {
-        const totalSteps = 60; // 1 Minute at 1s/step (or 120 at 0.5s). Adjusted to 60 for 1 minute timeline at 1x speed.
-        const startYear = 2015;
-        for (let i = 0; i <= totalSteps; i++) {
-            const progress = i / totalSteps;
-            const year = Math.floor(startYear + (i / 6)); // Approx 6 steps per year for 10 years in 60 steps
-            const curve = Math.pow(progress, 2.5); 
-            const capacityAdded = Math.floor(peak * curve);
-            const investment = (capacityAdded * 8); 
-            steps.push({
-                day: i,
-                consumersOffline: capacityAdded, 
-                costMillions: parseFloat(investment.toFixed(1)), 
-                restorationPct: Math.floor(progress * 100),
-                activeAlerts: i % 6 === 0 ? [`Year ${year}`] : [],
-                description: `Year ${year}: Total Capacity ${capacityAdded}MW`
-            });
-        }
-        return steps;
-    }
-    const costPerConsumerDay = 100; 
-    for (let d = 0; d <= duration + 5; d++) {
-        let consumers = 0;
-        if (d < duration) {
-            const progress = d / duration;
-            if (progress < 0.2) consumers = peak * (d / (duration * 0.2));
-            else consumers = peak * (1 - ((d - (duration * 0.2)) / (duration * 0.8)));
-        }
-        const dailyCost = (consumers * costPerConsumerDay) / 1000000;
-        steps.push({
-            day: d,
-            consumersOffline: Math.max(0, Math.floor(consumers)),
-            costMillions: parseFloat(dailyCost.toFixed(2)),
-            restorationPct: Math.min(100, Math.floor((1 - (consumers / peak)) * 100)),
-            activeAlerts: d === 0 ? ["Event Start"] : d === duration ? ["Restoration Complete"] : [],
-            description: `Day ${d}: Operations stabilizing.`
-        });
-    }
-    return steps;
-};
+// Kept for compatibility: the impact model now lives in services/impactModel.ts (no AI, no random numbers).
+export const calculateScenarioImpact = async (scenario: RiskScenario): Promise<TimelineStep[]> => buildTimeline([scenario]);
 
 export const analyzeAssetRisks = async (asset: InfrastructureAsset, region: string) => {
     // Check Cache
@@ -1356,7 +1324,8 @@ LIVE DATA FROM THE APP (fetched in the last few minutes - treat as current):
 - Live power-cut sources connected: UK Power Networks, Northern Powergrid${OUTAGE_WORKER_URL ? ', plus ' + (workerSourceStatus.filter(x => x.ok).map(x => x.name).join(', ') || 'none of NGED/SSEN/SPEN/ENWL yet') : ''}. Areas without a connected feed may still have power cuts.
 
 SCENARIO BEING SIMULATED: ${scenarios.length === 0 ? 'none' : scenarios.map(sc =>
-    `${sc.name} [${sc.category}] - ${sc.description} Duration ${sc.durationDays} days, peak ${sc.peakConsumersAffected?.toLocaleString?.() ?? sc.peakConsumersAffected} customers affected, areas: ${(sc.affectedDistricts || []).join(', ') || sc.region}. Note: scenario figures are illustrative assumptions, not forecasts.`).join(' | ')}
+    `${sc.name} [${sc.category}] - ${sc.description} Model: ${describeProfile(profileOf(sc))} Why these numbers: ${sc.rationale || 'not stated (older or AI-drafted scenario)'} Sources: ${(sc.sources || []).join('; ') || 'none'}${sc.supplyLost ? ` Supply lost: ${sc.supplyLost.label}` : ''}`).join(' | ')}
+SCENARIO METHOD: ${methodNote} Scenario figures are modelled, not forecasts; explain assumptions when asked.
 ${context.timelineNow ? `Simulation now at: ${context.timelineNow}` : ''}
 
 RULES:

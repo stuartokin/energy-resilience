@@ -10,9 +10,10 @@ interface TimelineControlProps {
     onPlayPause: () => void;
     onSeek: (day: number) => void;
     onSpeedChange: (speed: number) => void;
+    labels?: string[]; // per-step labels, e.g. "Hour 6" or "Day 2"
 }
 
-const TimelineControl: React.FC<TimelineControlProps> = ({ currentDay, totalDays, isPlaying, playbackSpeed, onPlayPause, onSeek, onSpeedChange }) => {
+const TimelineControl: React.FC<TimelineControlProps> = ({ currentDay, totalDays, isPlaying, playbackSpeed, onPlayPause, onSeek, onSpeedChange, labels }) => {
     return (
         <div className="bg-slate-900 border-t border-slate-800 p-4 flex items-center gap-4">
             <button 
@@ -24,9 +25,9 @@ const TimelineControl: React.FC<TimelineControlProps> = ({ currentDay, totalDays
             
             <div className="flex-1 flex flex-col gap-1">
                 <div className="flex justify-between text-xs text-slate-400 font-mono">
-                    <span>Day 0</span>
-                    <span className="text-white font-bold">Day {currentDay}</span>
-                    <span>Day {totalDays}</span>
+                    <span>{labels?.[0] || 'Day 0'}</span>
+                    <span className="text-white font-bold">{labels?.[currentDay] || `Day ${currentDay}`}</span>
+                    <span>{labels?.[totalDays] || `Day ${totalDays}`}</span>
                 </div>
                 <input 
                     type="range" 

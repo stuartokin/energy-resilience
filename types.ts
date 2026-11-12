@@ -121,10 +121,29 @@ export interface RiskScenario {
     lastUpdated?: number;
     status?: 'New' | 'Updated' | 'User' | 'Standard';
     sources?: string[];
+
+    // Phase 4: transparent impact model (services/impactModel.ts). Library scenarios have these.
+    model?: ImpactProfile;
+    rationale?: string;          // why these numbers: the reasoning, labelled where it is an assumption
+    references?: string[];       // ids of REFERENCE_EVENTS this scenario is calibrated against or compares with
+    supplyLost?: { mw: number; label: string }; // supply or capacity lost (informational)
+    customersBasis?: 'sourced' | 'scaled' | 'assumption';
 }
 
+// How customers lose and regain supply over time. All times in hours from the start of the event.
+export type ImpactProfile =
+    | { type: 'instant'; peak: number; offHours: number; restoreHours: number }
+    | { type: 'storm'; peak: number; buildHours: number; pctRestored24h: number; pctStillOff7d: number }
+    | { type: 'restoration'; peak: number; delayHours: number; pct24h: number; fullHours: number }
+    | { type: 'rota'; shareOff: number; days: number }
+    | { type: 'none'; days: number }
+    | { type: 'growth'; mwAdded: number; years: number };
+
 export interface TimelineStep {
-    day: number;
+    day: number;                // step index (kept as "day" for compatibility)
+    hours?: number;             // hours since the event started
+    label?: string;             // "Hour 6", "Day 2.5" or "2019"
+    energyUnservedMWh?: number; // cumulative
     consumersOffline: number; // The primary metric (or Capacity Added for Growth scenarios)
     costMillions: number; // Financial impact (or Investment for Growth scenarios)
     restorationPct: number;

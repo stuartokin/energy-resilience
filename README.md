@@ -39,6 +39,10 @@ A live picture of the GB energy system - infrastructure, power cuts, generator o
 | `scripts/build-bmu-locations.mjs` | Power station unit locations → `data/bmu-locations.json` (places REMIT outages on the map). |
 | `scripts/build-connections.mjs` | Which generators and batteries connect to which substation → `data/connections.json` (NESO TEC/Embedded Registers + DNO Embedded Capacity Registers). |
 | `services/connections.ts` | Reads `connections.json` and matches register entries to map substations by name. |
+| `content/scenarios.ts` | **The scenario library.** Each scenario has a model, the reasoning for its numbers and its sources. Copy one to add a new scenario. |
+| `content/assumptions.ts` | **Every value the impact model uses**, with source or reasoning, plus reference events. Shown in Help → Scenario model. |
+| `services/impactModel.ts` | Turns a scenario into customers off supply over time, energy not supplied and cost (VoLL). No AI, no random numbers. |
+| `services/flows.ts`, `components/EnergyFlowsPanel.tsx` | Electricity and gas flowing into and out of GB, by route, on one GW scale; the map arrows. |
 | `.github/workflows/deploy.yml` | Builds and publishes the site on every upload to `main`, and every Monday. |
 | `CHANGELOG.md` | Version history. |
 | `CLAUDE.md` | Rules for AI agents working on this repo (honesty, sources, style). |
@@ -175,6 +179,7 @@ jobs:
 4. Check `https://energy-outages.<you>.workers.dev/outages` shows data.
 5. Put the address in `config.ts` (`OUTAGE_WORKER_URL`).
 6. SP Energy Networks: create a free account and API key at spenergynetworks.opendatasoft.com, then Worker → **Settings → Variables and Secrets → Add → Secret** named `SPEN_API_KEY` → **Deploy**.
+7. **Whenever `worker/outages-worker.js` changes** (the changelog says so), repeat step 3: Edit code → paste the new file → Deploy.
 
 Electricity North West's outage data is classified "Shared" (public bodies only, restricted licence), so it is deliberately not used. The Worker caches for 2 minutes; Cloudflare's free plan allows 100,000 requests a day.
 </details>
@@ -189,7 +194,7 @@ Needs [Node.js](https://nodejs.org) 20+. Run `npm install`, then `npm run dev`, 
 
 | Source | Used for | Updates | Via |
 |---|---|---|---|
-| [Elexon Insights (BMRS)](https://bmrs.elexon.co.uk/api-documentation) | Frequency, demand, history, generation by fuel, interconnector flows | 1 min | Direct |
+| [Elexon Insights (BMRS)](https://bmrs.elexon.co.uk/api-documentation) | Frequency, demand, history, generation by fuel, interconnector flows (FUELINST) | 1-5 min | Direct |
 | [Elexon REMIT](https://bmrs.elexon.co.uk/remit) | Power station and interconnector outages | 5 min | Direct |
 | [Elexon system warnings](https://bmrs.elexon.co.uk/system-warnings) | NESO margin and demand-control notices | 5 min | Direct |
 | [NESO Carbon Intensity](https://carbonintensity.org.uk) | GB and regional mix, carbon intensity | 5 min | Direct |
@@ -199,7 +204,7 @@ Needs [Node.js](https://nodejs.org) 20+. Run `npm install`, then `npm run dev`, 
 | [NGED](https://connecteddata.nationalgrid.co.uk/dataset/live-power-cuts) | Power cuts | 2 min | Worker |
 | [SSEN](https://data.ssen.co.uk/@ssen-distribution/realtime_outage_dataset) | Power cuts | 2 min | Worker |
 | [SP Energy Networks](https://spenergynetworks.opendatasoft.com/explore/dataset/national-energy-outage-data/) | Power cuts | 2 min | Worker (key) |
-| [National Gas](https://data.nationalgas.com) | Gas demand, supply, linepack | 5 min | Worker |
+| [National Gas](https://data.nationalgas.com) | Gas demand, supply, linepack, flows by entry/export point | 5 min | Worker |
 | [Met Office](https://www.metoffice.gov.uk/weather/warnings-and-advice/uk-warnings) | Weather warnings | 5 min | Worker |
 | [Environment Agency](https://environment.data.gov.uk/flood-monitoring/doc/reference) | Flood warnings (England) | 5 min | Direct |
 | [OpenStreetMap](https://www.openstreetmap.org/copyright) | Infrastructure, place search | Weekly + on zoom | Build / direct |
@@ -217,5 +222,5 @@ Licences and credits: [ATTRIBUTION.md](ATTRIBUTION.md).
 1. ~~Phase 1 - real data only, working history charts, help and versioning~~ (v3.1.0)
 2. ~~Phase 2 - movable, resizable, text-size adjustable panels; layouts for every screen; new icon set~~ (v3.2.0)
 3. ~~Phase 3 part 1 - MapLibre map with weekly tiles of every UK energy asset; substation connections~~ (v3.3.0). ~~Part 2 - which generators connect to which substation~~ (v3.4.0)
-4. Phase 4 - a curated library of realistic risk scenarios in every category, with a transparent, sourced impact model
+4. ~~Phase 4 - a curated library of realistic risk scenarios in every category, with a transparent, sourced impact model~~ (v3.5.0). Also live energy flows and built-in analyst questions
 5. Phase 5 - weekly research agents that propose new scenarios and sources for review

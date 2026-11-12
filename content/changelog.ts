@@ -6,6 +6,21 @@ export interface ChangeEntry { version: string; date: string; title: string; cha
 
 export const CHANGELOG: ChangeEntry[] = [
     {
+        version: '3.5.0',
+        date: '2026-11-12',
+        title: 'Phase 4: sourced scenario library and impact model; live energy flows; analyst questions',
+        changes: [
+            'New scenario library: 28 realistic, generic scenarios across storms, cyber, asset failure, supply chain, geopolitics and growth. Includes a cyber attack on national system control, three large units tripping together, compromise of equipment from a single supplier, and repeats of real events (9 August 2019, Storm Arwen, North Hyde).',
+            'Every scenario shows "Why these numbers?": the model, the reasoning and the sources, with a badge saying whether figures are sourced, scaled from a real event, or illustrative.',
+            'Impact figures now come from a transparent model with no AI and no random numbers. Cost uses the Value of Lost Load (£16,950/MWh), replacing the old unsourced £100 per customer per day. Short events are shown hour by hour.',
+            'Help → Scenario model lists every value used, with sources, and the real events used as reference points.',
+            'New Energy Flows panel and map layer: electricity and gas flowing into and out of GB right now, on one scale (GW), with moving arrows showing direction. Gas is shown by route (Norway, LNG, continental pipelines, UK fields, storage).',
+            'Fix: interconnector exports were shown as zero. Flows now come from Elexon FUELINST, which shows both directions.',
+            'Analyst AI: built-in questions an energy analyst would ask, grouped by topic, plus scenario questions when a simulation is running.',
+            'AI-generated scenarios are labelled as unchecked drafts and asked to stay generic and explain their numbers.',
+        ],
+    },
+    {
         version: '3.4.0',
         date: '2026-11-12',
         title: 'Phase 3 (part 2): which generators and batteries connect to which substation',

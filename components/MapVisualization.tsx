@@ -14,6 +14,7 @@ import { ASSET_TYPES } from '../constants';
 import { InterconnectorFlow, RegionalCarbon, FloodWarning, WeatherWarning } from '../services/liveSystems';
 import { markOk, markFail } from '../services/health';
 import { iconSvg, dotSvg, powerCutSvg, voltageColour, ASSET_ICON } from './icons';
+import { FlowLink, fmtGW, fmtNative } from '../services/flows';
 import { loadConnections, connectionsAt, tecForStation, normaliseSubName, sameAsSite, ConnectionsData, FUEL_LABEL, FUEL_COLOUR, ECR_SOURCE_LABEL } from '../services/connections';
 import { PlusIcon, MinusIcon } from '@heroicons/react/24/solid';
 
@@ -34,6 +35,7 @@ interface MapProps {
     isScenarioComplete?: boolean;
     generatorOutages?: GeneratorOutage[];
     interconnectorFlows?: InterconnectorFlow[];
+    energyFlows?: FlowLink[];
     regionalCarbon?: Record<string, RegionalCarbon>;
     floodWarnings?: FloodWarning[];
     weatherWarnings?: WeatherWarning[];
@@ -125,12 +127,21 @@ const connectionsHtml = (data: ConnectionsData | null, name: string) => {
         `<div style="color:#64748b;font-size:9px;margin-top:4px">Source: ${c.sources.map(esc).join('; ')}. ${CONN_NOTE}</div></div>`;
 };
 
+const flowPopup = (l: FlowLink) => {
+    const into = l.value > 0, out = l.value < 0;
+    return `<div style="padding:10px 12px;max-width:280px"><b>${esc(l.name)}</b> <span style="color:#94a3b8">${l.kind === 'electricity' ? 'electricity interconnector' : 'gas'}</span>` +
+        `<div style="font-size:11px;color:#cbd5e1">${esc(l.from)}${l.landing ? ` &rarr; ${esc(l.landing)}` : ''}</div>` +
+        `<div style="margin-top:4px">${into ? 'Flowing into GB' : out ? 'Flowing out of GB' : 'No flow'}: <b>${fmtNative(l)}</b> (${fmtGW(l.gw)})${l.capacity ? ` of ${l.capacity.toLocaleString()} MW capacity` : ''}</div>` +
+        (l.note ? `<div style="font-size:10px;color:#94a3b8;margin-top:4px">${esc(l.note)}</div>` : '') +
+        `<div style="color:#64748b;font-size:9px;margin-top:4px">Source: ${l.kind === 'electricity' ? 'Elexon FUELINST (live, 5-minute)' : 'National Gas instantaneous flows (live, 2-minute); GW is converted at an assumed 39.5 MJ/m³'}. Route drawn is indicative.</div></div>`;
+};
+
 const OSM_LAYERS = ['osm-plants-icon', 'osm-plants-fill', 'osm-substations-icon', 'osm-substations-fill', 'osm-generators', 'osm-generators-fill', 'osm-lines', 'osm-cables', 'osm-gas', 'osm-gas-sites', 'osm-demand'];
 
 const MapVisualization: React.FC<MapProps> = ({
     region, assets, outages, historicalOutages = [], activeScenarios, dnoRegions = [], day, filters,
     onAssetSelect, onViewChange, currentImpact = 0, peakImpact = 1, viewOverride, isScenarioComplete, generatorOutages = [],
-    interconnectorFlows = [], regionalCarbon = {}, floodWarnings = [], weatherWarnings = []
+    interconnectorFlows = [], energyFlows = [], regionalCarbon = {}, floodWarnings = [], weatherWarnings = []
 }) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const mapRef = useRef<maplibregl.Map | null>(null);
@@ -140,6 +151,7 @@ const MapVisualization: React.FC<MapProps> = ({
     const popupRef = useRef<maplibregl.Popup | null>(null);
     const lastScenarioId = useRef<string | null>(null);
     const connRef = useRef<ConnectionsData | null>(null);
+    const flowsRef = useRef<FlowLink[]>([]);
 
     // Latest props for event handlers
     const propsRef = useRef({ assets, onAssetSelect, onViewChange, regionalCarbon });
@@ -353,6 +365,18 @@ const MapVisualization: React.FC<MapProps> = ({
             // Connection registers: DNO-connected generators / batteries (1 MW+) and the lines to their substations
             map.addSource('conn-lines', { type: 'geojson', data: emptyFC as any });
             map.addLayer({ id: 'conn-lines', type: 'line', source: 'conn-lines', paint: { 'line-color': ['get', 'color'], 'line-width': 1.5, 'line-opacity': ['case', ['to-boolean', ['get', 'connected']], 0.85, 0.45], 'line-dasharray': [2, 2] } });
+            // Energy flows into / out of GB: a faint route plus dashes that move in the direction of flow
+            map.addSource('energy-flows', { type: 'geojson', data: emptyFC as any });
+            const FLOW_WIDTH: any = ['interpolate', ['linear'], ['get', 'agw'], 0, 1, 0.5, 2, 2, 3.5, 10, 6.5, 40, 12];
+            map.addLayer({ id: 'energy-flows-base', type: 'line', source: 'energy-flows', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ['get', 'color'], 'line-width': FLOW_WIDTH, 'line-opacity': ['case', ['>', ['get', 'agw'], 0.01], 0.28, 0.12] } });
+            map.addLayer({ id: 'energy-flows-dash', type: 'line', source: 'energy-flows', filter: ['>', ['get', 'agw'], 0.01], layout: { 'line-join': 'round' }, paint: { 'line-color': ['get', 'color'], 'line-width': FLOW_WIDTH, 'line-opacity': 0.95, 'line-dasharray': [0, 4, 3] } });
+            map.on('click', 'energy-flows-base', (e: any) => {
+                if (e.originalEvent.__erHandled) return;
+                e.originalEvent.__erHandled = true;
+                const l = flowsRef.current.find(f => f.id === e.features?.[0]?.properties?.id);
+                if (l) showPopup(e.lngLat, flowPopup(l));
+            });
+
             map.addSource('ecr', { type: 'geojson', data: emptyFC as any });
             map.addLayer({ id: 'ecr', type: 'circle', source: 'ecr', minzoom: 7,
                 paint: {
@@ -419,7 +443,7 @@ const MapVisualization: React.FC<MapProps> = ({
                 const ciHtml = ci ? `<div style="margin-top:6px;border-top:1px solid #334155;padding-top:6px"><div>Carbon intensity: <b>${ci.intensity} gCO2/kWh</b> (${esc(ci.index)})</div><div style="color:#94a3b8;font-size:11px">Local mix: ${ci.mix.slice(0, 4).map(m => `${esc(m.fuel)} ${m.perc}%`).join(', ')}</div><div style="color:#64748b;font-size:9px;margin-top:2px">Source: NESO Carbon Intensity API (live forecast)</div></div>` : '';
                 showPopup(e.lngLat, `<div style="padding:10px 12px;min-width:220px"><b>${esc(p.name)}</b><br><span style="color:#94a3b8">${esc(p.operator)}</span>${ciHtml}</div>`);
             });
-            ['assets', 'asset-lines', 'asset-lines-dashed', 'ecr', ...OSM_LAYERS].forEach(l => {
+            ['assets', 'asset-lines', 'asset-lines-dashed', 'ecr', 'energy-flows-base', ...OSM_LAYERS].forEach(l => {
                 if (!map.getLayer(l)) return;
                 map.on('mouseenter', l, () => { map.getCanvas().style.cursor = 'pointer'; });
                 map.on('mouseleave', l, () => { map.getCanvas().style.cursor = ''; });
@@ -612,15 +636,6 @@ const MapVisualization: React.FC<MapProps> = ({
     // Interconnector flows, floods, weather warnings
     useEffect(() => {
         if (!ready) return;
-        setMarkers('flows', !filters.has('Interconnector Flows') ? [] : interconnectorFlows.map(f => {
-            const importing = f.mw > 0, exporting = f.mw < 0;
-            const colour = importing ? '#4ade80' : exporting ? '#fb923c' : '#64748b';
-            return {
-                lngLat: [f.lng, f.lat] as [number, number], anchor: 'left' as maplibregl.PositionAnchor, z: 2,
-                html: `<div style="margin-left:6px;white-space:nowrap;background:rgba(15,23,42,0.85);border:1px solid ${colour};color:${colour};font-size:10px;font-weight:bold;padding:1px 5px;border-radius:4px">${esc(f.name)} ${importing ? '&darr;' : exporting ? '&uarr;' : ''}${Math.abs(f.mw)} MW</div>`,
-                popup: `<div style="padding:10px 12px"><b>${esc(f.name)}</b> (to ${esc(f.country)})<br>${importing ? 'Importing' : exporting ? 'Exporting' : 'No flow'}: <b>${Math.abs(f.mw)} MW</b> of ${f.capacityMW} MW<div style="color:#64748b;font-size:9px;margin-top:4px">Source: Elexon (live, 5-minute)</div></div>`,
-            };
-        }));
         setMarkers('floods', !filters.has('Flood Warnings') ? [] : floodWarnings.filter(w => typeof w.lat === 'number').map(w => {
             const severe = w.level === 1;
             return {
@@ -635,7 +650,48 @@ const MapVisualization: React.FC<MapProps> = ({
             html: `<div style="position:relative;width:22px;height:19px"><div style="width:0;height:0;border-left:11px solid transparent;border-right:11px solid transparent;border-bottom:19px solid ${colours[w.level] || '#facc15'};filter:drop-shadow(0 0 3px #000)"></div><div style="position:absolute;top:5px;left:9px;font-size:11px;font-weight:bold;color:#000">!</div></div>`,
             popup: `<div style="padding:10px 12px;max-width:280px"><b>${esc(w.title)}</b><div style="font-size:11px;margin-top:4px">${esc(w.description)}</div>${w.link ? `<a href="${esc(w.link)}" target="_blank" rel="noopener" style="color:#67e8f9;font-size:11px">Met Office details</a>` : ''}<div style="color:#64748b;font-size:9px;margin-top:4px">Source: Met Office. Marker shows the region, not the exact area.</div></div>`,
         })));
-    }, [interconnectorFlows, floodWarnings, weatherWarnings, filters, ready]);
+    }, [floodWarnings, weatherWarnings, filters, ready]);
+
+    // ---------- Energy flows (electricity interconnectors and gas) ----------
+    useEffect(() => {
+        const map = mapRef.current;
+        if (!map || !ready) return;
+        flowsRef.current = energyFlows;
+        const on = filters.has('Interconnector Flows');
+        const feats = on ? energyFlows.map(l => {
+            // Geometry runs in the direction of flow, so the moving dashes show which way energy is going
+            const coords = l.gw < 0 ? [...l.path].reverse() : l.path;
+            return { type: 'Feature', properties: { id: l.id, agw: Math.abs(l.gw), color: l.kind === 'electricity' ? '#22d3ee' : '#f59e0b' }, geometry: { type: 'LineString', coordinates: coords } };
+        }) : [];
+        (map.getSource('energy-flows') as maplibregl.GeoJSONSource)?.setData({ type: 'FeatureCollection', features: feats } as any);
+        // Labels about a third of the way in from the far end
+        setMarkers('flows', !on ? [] : energyFlows.filter(l => Math.abs(l.gw) > 0.01).map(l => {
+            const p = l.path[Math.min(l.path.length - 2, Math.max(0, Math.floor((l.path.length - 1) / 3)))];
+            const q = l.path[Math.min(l.path.length - 1, Math.max(1, Math.floor((l.path.length - 1) / 3) + 1))];
+            const at: [number, number] = [p[0] + (q[0] - p[0]) * 0.5, p[1] + (q[1] - p[1]) * 0.5];
+            const colour = l.kind === 'electricity' ? '#22d3ee' : '#f59e0b';
+            const into = l.gw > 0;
+            return {
+                lngLat: at, z: 2,
+                html: `<div style="white-space:nowrap;background:rgba(15,23,42,0.88);border:1px ${into ? 'solid' : 'dashed'} ${colour};color:${colour};font:700 10px/1.25 system-ui,sans-serif;padding:1px 5px;border-radius:4px;opacity:${into ? 1 : 0.8}">${esc(l.name)} ${into ? '&#9654; in' : '&#9664; out'} ${fmtGW(l.gw)}</div>`,
+                popup: flowPopup(l),
+            };
+        }));
+    }, [energyFlows, filters, ready]);
+
+    // Move the dashes (only while flows are shown and the page is visible)
+    useEffect(() => {
+        const map = mapRef.current;
+        if (!map || !ready || !filters.has('Interconnector Flows')) return;
+        const seq = [[0, 4, 3], [0.5, 4, 2.5], [1, 4, 2], [1.5, 4, 1.5], [2, 4, 1], [2.5, 4, 0.5], [3, 4, 0], [0, 0.5, 3, 3.5], [0, 1, 3, 3], [0, 1.5, 3, 2.5], [0, 2, 3, 2], [0, 2.5, 3, 1.5], [0, 3, 3, 1], [0, 3.5, 3, 0.5]];
+        let i = 0;
+        const id = setInterval(() => {
+            if (document.hidden || !map.getLayer('energy-flows-dash')) return;
+            i = (i + 1) % seq.length;
+            map.setPaintProperty('energy-flows-dash', 'line-dasharray', seq[i]);
+        }, 70);
+        return () => clearInterval(id);
+    }, [filters, ready]);
 
     // ---------- Camera ----------
     useEffect(() => {

@@ -1,5 +1,5 @@
 // Live system feeds (all free, no keys):
-//   - Interconnector flows       Elexon FUELINST (generation/outturn/current)
+//   - Interconnector flows       Elexon FUELINST dataset (signed: + import, - export)
 //   - Regional carbon & mix      NESO Carbon Intensity API (by DNO region)
 //   - Flood warnings             Environment Agency (England)
 //   - Gas system                 National Gas, via the site's Cloudflare Worker
@@ -35,11 +35,19 @@ const INTERCONNECTORS: Record<string, { name: string, country: string, capacityM
     INTGRNL: { name: 'Greenlink', country: 'Ireland', capacityMW: 500, lat: 51.683, lng: -4.992 },
 };
 
+// Elexon FUELINST: instantaneous output by fuel type every 5 minutes. Interconnector values are signed
+// (positive = import into GB, negative = export). The "generation/outturn/current" summary is not used
+// because it shows exports as zero.
 export const fetchInterconnectorFlows = async (): Promise<InterconnectorFlow[]> => {
-    const rows = await fetchJson('https://data.elexon.co.uk/bmrs/api/v1/generation/outturn/current?format=json');
-    return (rows || [])
-        .filter((r: any) => INTERCONNECTORS[r.fuelType])
-        .map((r: any) => ({ code: r.fuelType, ...INTERCONNECTORS[r.fuelType], mw: Math.round(r.currentUsage || 0) }));
+    const to = new Date(), from = new Date(to.getTime() - 40 * 60000);
+    const json = await fetchJson(`https://data.elexon.co.uk/bmrs/api/v1/datasets/FUELINST?publishDateTimeFrom=${from.toISOString()}&publishDateTimeTo=${to.toISOString()}&format=json`);
+    const latest: Record<string, { t: string, mw: number }> = {};
+    for (const r of (json.data || json || [])) {
+        if (!INTERCONNECTORS[r.fuelType]) continue;
+        const t = r.startTime || r.publishTime || '';
+        if (!latest[r.fuelType] || t >= latest[r.fuelType].t) latest[r.fuelType] = { t, mw: Math.round(r.generation || 0) };
+    }
+    return Object.keys(INTERCONNECTORS).filter(k => latest[k]).map(k => ({ code: k, ...INTERCONNECTORS[k], mw: latest[k].mw }));
 };
 
 // ---------- Regional carbon intensity & generation mix (by DNO region) ----------
@@ -111,7 +119,12 @@ export const fetchFloodWarnings = async (): Promise<{ warnings: FloodWarning[], 
 };
 
 // ---------- Gas system (via Worker) ----------
-export interface GasSnapshot { asAt: string | null; ntsDemand: number | null; totalSupply: number | null; linepack: number | null; ldzDemand: number | null; powerStations: number | null; industrial: number | null; storageInjection: number | null; exports: number | null; }
+export interface GasSnapshot {
+    asAt: string | null; ntsDemand: number | null; totalSupply: number | null; linepack: number | null; ldzDemand: number | null;
+    powerStations: number | null; industrial: number | null; storageInjection: number | null; exports: number | null;
+    // From Worker v3 (National Gas "latest gas flows"): mcm/d by entry point, terminal and export point
+    entryPoints?: Record<string, number>; terminals?: Record<string, number>; exportsBy?: Record<string, number | null>;
+}
 
 export const fetchGasSnapshot = async (): Promise<GasSnapshot | null> => {
     if (!OUTAGE_WORKER_URL) return null;

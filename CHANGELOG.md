@@ -3,6 +3,15 @@
 Newest first. Mirrored in the app under **Help → What's new** (`content/changelog.ts`).
 Versioning: MAJOR = big change in what the app is; MINOR = new features or data sources; PATCH = fixes.
 
+## 3.5.0 - 2026-11-12 - Phase 4: scenario library and impact model; energy flows; analyst questions
+- `content/scenarios.ts`: 28 generic scenarios with `model`, `rationale`, `sources`, `customersBasis`; replaces the old built-in list (the vendor-named and site-specific ones are gone).
+- `content/assumptions.ts`: every model value with source or reasoning (VoLL, average demand per customer, GB customers, SQSS loss limit, LFDD scaling, ESRS, ESEC rota block, gas CV) and reference events.
+- `services/impactModel.ts`: deterministic profiles (instant, storm, restoration, rota, none, growth); hourly/6-hourly/daily steps; cost = energy not supplied × VoLL. Growth cost no longer invented.
+- `services/flows.ts`, `components/EnergyFlowsPanel.tsx`: electricity (Elexon FUELINST, signed) and gas (National Gas latest flows by entry point, via Worker) by route; animated map layer.
+- Worker `/gas` now uses National Gas `latest-gas-flows-download` (entry points, terminals, exports). **Redeploy the Worker.** Cache key bumped to v3.
+- Fix: interconnector exports were zero (generation/outturn/current clamps exports).
+- Chat: suggested questions; Analyst context includes gas routes and each scenario's model, rationale and sources.
+
 ## 3.4.0 - 2026-11-12 - Phase 3 (part 2): who connects where
 - `scripts/build-connections.mjs` builds `data/connections.json` on each publish from the NESO TEC and Embedded Registers and the openly licensed DNO Embedded Capacity Registers (NPg; SPEN and UKPN when `SPEN_API_KEY` / `UKPN_API_KEY` GitHub secrets are set). Sites under 1 MW and all personal fields (customer names, MPANs, addresses) are dropped.
 - Map: ECR site layer (fuel colour, MW size, connected vs accepted); site popup with Primary/BSP/GSP chain and route drawn to matched substations; substation popup lists connected MW by fuel, top sites and queue; power station popup shows TEC connection site.

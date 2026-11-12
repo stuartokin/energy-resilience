@@ -1,6 +1,41 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { PaperAirplaneIcon, SparklesIcon, UserIcon, CpuChipIcon, ClipboardDocumentIcon, CheckIcon } from '@heroicons/react/24/solid';
+import { PaperAirplaneIcon, SparklesIcon, UserIcon, CpuChipIcon, ClipboardDocumentIcon, CheckIcon, LightBulbIcon, ChevronDownIcon } from '@heroicons/react/24/solid';
+
+// Questions an energy analyst typically asks. The Analyst answers from the live data the app passes it,
+// and says when it is going beyond that data.
+const SUGGESTED: { group: string, questions: string[], needsScenario?: boolean }[] = [
+    { group: 'Right now', questions: [
+        'Give me a five-line briefing on the GB energy system right now.',
+        'How tight is the electricity system right now, and what is driving it?',
+        'What is the current generation mix telling us? Is anything unusual for this time of day and year?',
+        'Is system frequency behaving normally? What would make you concerned?',
+    ] },
+    { group: 'Security of supply', questions: [
+        'What is the largest single loss the system is exposed to right now, and how would the system cope if it tripped?',
+        'Which generator outages matter most for security of supply right now, and why?',
+        'Are there any NESO system notices in force? What do they mean in plain English?',
+        'If the wind dropped sharply in the next few hours, where would the replacement power come from?',
+    ] },
+    { group: 'Gas and imports', questions: [
+        'How dependent is GB on imports right now, for electricity and for gas?',
+        'Where is our gas coming from right now, and what would happen if the Langeled pipeline tripped?',
+        'Is NTS linepack healthy, and how much gas are power stations drawing?',
+        'Which interconnectors are exporting, and what usually causes that?',
+    ] },
+    { group: 'Networks and weather', questions: [
+        'Summarise the current power cuts by network operator. Is anything unusual?',
+        'Do any current weather or flood warnings affect important energy sites?',
+        'Which regions have the highest carbon intensity right now, and why?',
+    ] },
+    { group: 'This scenario', needsScenario: true, questions: [
+        'Explain the impact figures for this scenario and the assumptions behind them.',
+        'What are the three most effective mitigations for this scenario?',
+        'How would restoration be prioritised in this scenario, and who would lead it?',
+        'Which real past events is this scenario most like, and what did we learn from them?',
+    ] },
+];
+
 import { ChatMessage, RiskScenario, OutageEvent, GenerationMix } from '../types';
 import { chatWithAnalyst } from '../services/geminiService';
 
@@ -48,11 +83,19 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ isOpen, activeScenarios, assetCou
         }
     }, [messages, isOpen]);
 
-    const handleSend = async (e?: React.FormEvent) => {
-        e?.preventDefault();
-        if (!inputValue.trim() || isTyping) return;
+    const [showSuggestions, setShowSuggestions] = useState(true);
+    const groups = SUGGESTED.filter(g => !g.needsScenario || activeScenarios.length > 0);
+    const [group, setGroup] = useState(groups[0].group);
+    useEffect(() => { if (activeScenarios.length > 0) setGroup('This scenario'); }, [activeScenarios.length]);
+    const activeGroup = groups.find(g => g.group === group) || groups[0];
 
-        const userMsg: ChatMessage = { role: 'user', text: inputValue, timestamp: Date.now() };
+    const handleSend = async (e?: React.FormEvent, preset?: string) => {
+        e?.preventDefault();
+        const text = (preset ?? inputValue).trim();
+        if (!text || isTyping) return;
+        setShowSuggestions(false);
+
+        const userMsg: ChatMessage = { role: 'user', text, timestamp: Date.now() };
         setMessages(prev => [...prev, userMsg]);
         setInputValue("");
         setIsTyping(true);
@@ -155,6 +198,28 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ isOpen, activeScenarios, assetCou
                     </div>
                 )}
                 <div ref={messagesEndRef} />
+            </div>
+
+            {/* Suggested questions */}
+            <div className="bg-slate-950 border-t border-slate-800 shrink-0">
+                <button type="button" onClick={() => setShowSuggestions(v => !v)} className="w-full flex items-center justify-between px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-amber-300 hover:text-amber-200">
+                    <span className="flex items-center gap-1"><LightBulbIcon className="w-3 h-3" /> Suggested questions</span>
+                    <ChevronDownIcon className={`w-3 h-3 transition-transform ${showSuggestions ? '' : 'rotate-180'}`} />
+                </button>
+                {showSuggestions && (
+                    <div className="px-3 pb-2">
+                        <div className="flex flex-wrap gap-1 mb-1.5">
+                            {groups.map(g => (
+                                <button key={g.group} type="button" onClick={() => setGroup(g.group)} className={`px-2 py-0.5 rounded-full text-[10px] border ${activeGroup.group === g.group ? 'bg-cyan-900/50 border-cyan-500 text-cyan-200' : 'border-slate-700 text-slate-400 hover:text-white'}`}>{g.group}</button>
+                            ))}
+                        </div>
+                        <div className="flex flex-col gap-1 max-h-40 overflow-y-auto custom-scrollbar">
+                            {activeGroup.questions.map(q => (
+                                <button key={q} type="button" disabled={isTyping} onClick={() => handleSend(undefined, q)} className="text-left text-[11px] leading-snug px-2 py-1 rounded bg-slate-800/70 hover:bg-slate-700 text-slate-200 border border-slate-700 disabled:opacity-50">{q}</button>
+                            ))}
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* Input Area */}

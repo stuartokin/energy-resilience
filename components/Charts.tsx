@@ -53,7 +53,7 @@ export const ImpactChart: React.FC<ChartProps> = ({ data, currentDay, onPointCli
         <div className="w-full h-full bg-slate-900/50 rounded-lg p-2 border border-slate-800 flex flex-col relative">
             <div className="flex justify-between items-center mb-2 px-2 z-10">
                 <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                    {viewMode === 'consumers' ? 'Consumers Offline' : 'Cumulative Economic Impact'}
+                    {viewMode === 'consumers' ? 'Customers off supply' : 'Cumulative cost (VoLL)'}
                 </h3>
                 <div className="flex bg-slate-800 rounded p-0.5">
                     <button 
@@ -89,6 +89,7 @@ export const ImpactChart: React.FC<ChartProps> = ({ data, currentDay, onPointCli
                         <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                         <XAxis 
                             dataKey="day" 
+                            tickFormatter={(v) => data[Number(v)]?.label || String(v)}
                             stroke="#94a3b8" 
                             fontSize={10} 
                             interval="preserveStartEnd"
@@ -98,18 +99,18 @@ export const ImpactChart: React.FC<ChartProps> = ({ data, currentDay, onPointCli
                             fontSize={10} 
                             tickFormatter={(val) => {
                                 if (viewMode === 'consumers') return val >= 1000 ? `${(val/1000).toFixed(0)}k` : val;
-                                return `$${val}M`;
+                                return `£${val}m`;
                             }}
                         />
                         <Tooltip 
                             contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f1f5f9' }}
                             itemStyle={{ fontSize: '12px' }}
-                            labelFormatter={(l) => `Day ${l}`}
+                            labelFormatter={(l) => data[Number(l)]?.label || `Step ${l}`}
                             formatter={(value: any) => {
                                 if (value === null || value === undefined) return [];
                                 return [
-                                    viewMode === 'consumers' ? value.toLocaleString() : `$${value.toFixed(1)}M`, 
-                                    viewMode === 'consumers' ? 'Consumers' : 'Cumulative Cost'
+                                    viewMode === 'consumers' ? value.toLocaleString() : `£${value.toFixed(1)}m`, 
+                                    viewMode === 'consumers' ? 'Customers off supply' : 'Cost of energy not supplied (VoLL)'
                                 ];
                             }}
                         />

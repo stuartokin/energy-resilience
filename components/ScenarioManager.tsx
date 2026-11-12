@@ -10,6 +10,14 @@ import {
 } from '@heroicons/react/24/solid';
 import { generateCustomScenario, getCoordinatesForLocation } from '../services/geminiService';
 import { PlayIcon } from '@heroicons/react/24/solid';
+import { describeProfile, profileOf } from '../services/impactModel';
+
+const BASIS_BADGE: Record<string, [string, string]> = {
+    sourced: ['Sourced', 'bg-green-900/30 text-green-300 border-green-800'],
+    scaled: ['Scaled from a real event', 'bg-cyan-900/30 text-cyan-300 border-cyan-800'],
+    assumption: ['Illustrative', 'bg-amber-900/30 text-amber-300 border-amber-800'],
+};
+const srcParts = (s: string) => { const i = s.lastIndexOf(' — '); const j = s.lastIndexOf(' - http'); const k = i >= 0 ? i : j; return k >= 0 ? { title: s.slice(0, k), url: s.slice(k + 3).trim() } : { title: s, url: /^https?:/.test(s) ? s : '' }; };
 
 interface ScenarioManagerProps {
     scenarios: RiskScenario[];
@@ -646,7 +654,7 @@ const ScenarioManager: React.FC<ScenarioManagerProps> = ({ scenarios, onRunSimul
                                                 <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors shrink-0 ${isSelected ? 'bg-red-500 border-red-500' : 'border-slate-500 bg-transparent'}`}>
                                                     {isSelected && <CheckCircleIcon className="w-4 h-4 text-white" />}
                                                 </div>
-                                                <h3 className="font-bold text-white truncate max-w-[150px]">{scenario.name}</h3>
+                                                <h3 className="font-bold text-white leading-tight line-clamp-2">{scenario.name}</h3>
                                                 {isUser && <span className="text-[10px] bg-indigo-900 text-indigo-300 px-1.5 rounded border border-indigo-700">Custom</span>}
                                             </div>
                                             
@@ -668,7 +676,26 @@ const ScenarioManager: React.FC<ScenarioManagerProps> = ({ scenarios, onRunSimul
                                             </div>
                                         </div>
                                         
-                                        <p className="text-sm text-slate-400 mb-3 pl-6 line-clamp-2 flex-1">{scenario.description}</p>
+                                        <p className="text-sm text-slate-400 mb-2 pl-6 line-clamp-2 flex-1">{scenario.description}</p>
+
+                                        {/* How the numbers were reached */}
+                                        <details className="pl-6 mb-2 text-[11px] text-slate-400" onClick={e => e.stopPropagation()}>
+                                            <summary className="cursor-pointer select-none text-slate-300 hover:text-white flex items-center gap-2 flex-wrap">
+                                                <span>Why these numbers?</span>
+                                                {scenario.customersBasis && BASIS_BADGE[scenario.customersBasis] && <span className={`px-1.5 rounded border text-[9px] ${BASIS_BADGE[scenario.customersBasis][1]}`}>{BASIS_BADGE[scenario.customersBasis][0]}</span>}
+                                                {!scenario.model && <span className="px-1.5 rounded border text-[9px] bg-slate-800 text-slate-400 border-slate-600">{/^AI draft/.test(scenario.rationale || '') ? 'AI draft' : 'No model'}</span>}
+                                            </summary>
+                                            <div className="mt-1 space-y-1">
+                                                <div><span className="text-slate-500">Model:</span> {describeProfile(profileOf(scenario))}</div>
+                                                {scenario.supplyLost && <div><span className="text-slate-500">Supply lost:</span> {scenario.supplyLost.label}</div>}
+                                                <div><span className="text-slate-500">Reasoning:</span> {scenario.rationale || 'Not stated. This scenario has no sourced model, so a simple default shape is used.'}</div>
+                                                {!!scenario.sources?.length && (
+                                                    <ul className="list-disc pl-4">
+                                                        {scenario.sources.map((src, i) => { const p = srcParts(src); return <li key={i}>{p.url ? <a href={p.url} target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">{p.title}</a> : p.title}</li>; })}
+                                                    </ul>
+                                                )}
+                                            </div>
+                                        </details>
                                         
                                         <div className="flex items-center gap-3 pl-6 text-xs text-slate-500 mb-3 flex-wrap">
                                             <span className={`px-2 py-0.5 rounded border font-bold ${
@@ -679,7 +706,8 @@ const ScenarioManager: React.FC<ScenarioManagerProps> = ({ scenarios, onRunSimul
                                                 {scenario.category}
                                             </span>
                                             <span className="flex items-center gap-1"><ClockIcon className="w-3 h-3" /> {scenario.durationDays}d</span>
-                                            <span className="flex items-center gap-1"><ChartBarIcon className="w-3 h-3" /> {scenario.peakConsumersAffected > 1000 ? (scenario.peakConsumersAffected/1000).toFixed(0)+'k' : scenario.peakConsumersAffected}</span>
+                                            <span className="flex items-center gap-1" title={scenario.category === 'Growth' ? 'MW added' : 'Peak customers off supply'}><ChartBarIcon className="w-3 h-3" /> {scenario.peakConsumersAffected >= 1e6 ? (scenario.peakConsumersAffected / 1e6).toFixed(scenario.peakConsumersAffected >= 1e7 ? 0 : 1) + 'm' : scenario.peakConsumersAffected > 1000 ? (scenario.peakConsumersAffected/1000).toFixed(0)+'k' : scenario.peakConsumersAffected}{scenario.category === 'Growth' ? ' MW' : ''}</span>
+                                            <span className={`px-1.5 rounded text-[10px] ${scenario.probability === 'High' ? 'text-red-300' : scenario.probability === 'Medium' ? 'text-amber-300' : 'text-slate-400'}`} title="Likelihood: qualitative judgement informed by the National Risk Register">{scenario.probability} likelihood</span>
                                         </div>
 
                                         {/* Explicit View Controls */}

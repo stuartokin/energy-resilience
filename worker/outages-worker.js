@@ -50,7 +50,7 @@ export default {
 
         // Shared cache so many visitors cause at most one fetch per source every 2 minutes.
         const cache = caches.default;
-        const cacheKey = new Request(new URL(`/cache-v2${url.pathname === '/' ? '/outages' : url.pathname}`, url).toString());
+        const cacheKey = new Request(new URL(`/cache-v3${url.pathname === '/' ? '/outages' : url.pathname}`, url).toString());
         let cached = await cache.match(cacheKey);
         if (!cached) {
             let body;
@@ -67,31 +67,36 @@ export default {
     },
 };
 
-// ---------- National Gas: live NTS flows (mcm/day) and linepack (mcm) ----------
+// ---------- National Gas: live NTS flows by entry point, terminal and export (mcm/d), linepack (mcm) ----------
+// Source: National Gas Data Portal "latest gas flows" (instantaneous flows, 2-minute readings).
 async function fetchGas() {
-    const ids = '591,558,601,602,585,586,583,603,584,587,588';
-    const day = new Date().toISOString().slice(0, 10);
-    const res = await fetch('https://data.nationalgas.com/api/customisable-downloads-download', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'User-Agent': 'energy-resilience-worker' },
-        body: JSON.stringify({ ids, fromDate: day, toDate: day, isLatest: true, predefinedDate: 'Latest Update', type: 'CSV' }),
+    const res = await fetch('https://data.nationalgas.com/api/latest-gas-flows-download', {
+        headers: { 'User-Agent': 'energy-resilience-worker' },
     });
     if (!res.ok) throw new Error(`National Gas HTTP ${res.status}`);
-    const rows = parseCsv(await res.text());
-    // Keep the most recent reading for each measure. Timestamps are "dd/mm/yyyy hh:mm:ss" (UK time).
+    // The file has several sections; every data line is: name, published, value, timestamp, ...
+    // Keep the most recent reading for each name. Timestamps are "dd/mm/yyyy hh:mm:ss" (UK time).
     const ts = v => { const m = String(v || '').match(/(\d+)\/(\d+)\/(\d+) (\d+):(\d+)/); return m ? Date.UTC(+m[3], +m[2] - 1, +m[1], +m[4], +m[5]) : 0; };
     const latest = {};
-    for (const r of rows) {
-        const name = r['System Entry Name'];
-        if (!name) continue;
-        const t = ts(r['Timestamp']);
-        if (!latest[name] || t > latest[name].t) latest[name] = { t, value: parseFloat(r['Value']), time: r['Timestamp'] };
+    for (const line of (await res.text()).split(/\r?\n/)) {
+        const c = line.split(',');
+        const value = parseFloat(c[2]);
+        const t = ts(c[3]);
+        if (!c[0] || !t || isNaN(value)) continue;
+        if (!latest[c[0]] || t >= latest[c[0]].t) latest[c[0]] = { t, value: Math.round(value * 10) / 10, time: c[3] };
     }
-    const pick = n => latest[n] ? Math.round(latest[n].value * 10) / 10 : null;
+    const pick = n => latest[n] ? latest[n].value : null;
+    const TERMINAL = /TERMINAL$/i;
+    const SUMMARY = /^(TOTAL SUPPLY|NTS Demand Flow|NTS Actual Linepack|Industrial Demand Flow|Interconnector Export Demand Flow|LDZ Offtake Flow|Power Station Demand Flow|Storage Demand Flow|Bacton BBL Export|Bacton INT Export|Moffat Export)$/;
+    const entryPoints = {}, terminals = {};
+    for (const [name, v] of Object.entries(latest)) {
+        if (SUMMARY.test(name)) continue;
+        (TERMINAL.test(name) ? terminals : entryPoints)[name] = v.value;
+    }
     return {
         generated: new Date().toISOString(),
         units: 'mcm/d (flows), mcm (linepack)',
-        asAt: latest['NTS Demand Flow']?.time || null,
+        asAt: latest['TOTAL SUPPLY']?.time || latest['NTS Demand Flow']?.time || null,
         ntsDemand: pick('NTS Demand Flow'),
         totalSupply: pick('TOTAL SUPPLY'),
         linepack: pick('NTS Actual Linepack'),
@@ -100,6 +105,9 @@ async function fetchGas() {
         industrial: pick('Industrial Demand Flow'),
         storageInjection: pick('Storage Demand Flow'),
         exports: pick('Interconnector Export Demand Flow'),
+        exportsBy: { 'Bacton BBL Export': pick('Bacton BBL Export'), 'Bacton INT Export': pick('Bacton INT Export'), 'Moffat Export': pick('Moffat Export') },
+        entryPoints,
+        terminals,
     };
 }
 

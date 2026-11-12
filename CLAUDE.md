@@ -8,6 +8,7 @@ A public, personal project by Stuart Okin: a live picture of the GB energy syste
 - **Every estimate or modelled value carries its reasoning or source** next to it in the UI (and in the scenario parameter files once built).
 - **AI output is labelled** as unverified web search. AI never supplies the numbers in scenario impact models.
 - **No site-specific attack detail.** Scenarios are system-level and generic (e.g. "single OT vendor common-mode compromise"), never naming a vendor against mapped sites, never speculating about a specific site's suppliers, controls or weaknesses.
+- **Scenarios** live in `content/scenarios.ts`. Each needs a `model`, a `rationale` (why the numbers; say "assumption" where it is one), `sources` ("Title — URL") and `customersBasis`. Model values live in `content/assumptions.ts` with a source or stated reasoning. Real events are reference points, not targets.
 - Don't use restricted data (e.g. ENWL "Shared" data) or anything not openly licensed for public display.
 
 ## Documentation is part of every change

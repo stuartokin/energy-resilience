@@ -5,16 +5,19 @@ import { APP_VERSION, BUILD_DATE, BUILD_COMMIT, ASSET_TYPES } from '../constants
 import { CHANGELOG } from '../content/changelog';
 import { iconSvg, powerCutSvg, LINE_LEGEND } from './icons';
 import { DATA_SOURCES } from '../content/sources';
+import { ASSUMPTIONS, REFERENCE_EVENTS } from '../content/assumptions';
+import { methodNote } from '../services/impactModel';
+import { GAS_CV_NOTE } from '../services/flows';
 import { getApiSystemStatus, getSystemLogs } from '../services/geminiService';
 
 interface HelpModalProps {
     onClose: () => void;
     onLaunchTour?: () => void;
-    initialTab?: 'guide' | 'whatsnew' | 'assets' | 'sources' | 'status' | 'logs';
+    initialTab?: 'guide' | 'whatsnew' | 'assets' | 'model' | 'sources' | 'status' | 'logs';
 }
 
 const HelpModal: React.FC<HelpModalProps> = ({ onClose, onLaunchTour, initialTab = 'guide' }) => {
-    const [activeTab, setActiveTab] = useState<'guide' | 'whatsnew' | 'assets' | 'sources' | 'status' | 'logs'>(initialTab);
+    const [activeTab, setActiveTab] = useState<'guide' | 'whatsnew' | 'assets' | 'model' | 'sources' | 'status' | 'logs'>(initialTab);
     const apiStatuses = getApiSystemStatus();
     const systemLogs = getSystemLogs();
 
@@ -22,6 +25,7 @@ const HelpModal: React.FC<HelpModalProps> = ({ onClose, onLaunchTour, initialTab
         { id: 'guide', label: 'User Guide', icon: BookOpenIcon },
         { id: 'whatsnew', label: "What's new", icon: SparklesIcon },
         { id: 'assets', label: 'Map legend', icon: CircleStackIcon },
+        { id: 'model', label: 'Scenario model', icon: PlayIcon },
         { id: 'sources', label: 'About & sources', icon: ChatBubbleBottomCenterTextIcon },
         { id: 'status', label: 'System Status', icon: ServerStackIcon },
         { id: 'logs', label: 'System Logs', icon: ClipboardDocumentListIcon },
@@ -171,6 +175,44 @@ const HelpModal: React.FC<HelpModalProps> = ({ onClose, onLaunchTour, initialTab
                                             <div key={l.label} className="flex items-center gap-3 text-xs text-slate-300">
                                                 <svg width="56" height="10"><line x1="2" y1="5" x2="54" y2="5" stroke={l.colour} strokeWidth={l.width} strokeDasharray={l.dash || undefined} strokeLinecap="round" /></svg>
                                                 {l.label}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {activeTab === 'model' && (
+                            <div className="animate-fadeIn space-y-5 text-sm">
+                                <div>
+                                    <h3 className="text-xl font-bold text-white mb-2 border-b border-slate-700 pb-2">How scenario impacts are worked out</h3>
+                                    <p className="text-slate-300 mb-2">Scenario figures come from a simple, transparent model in the app, not from AI and not from random numbers. Each library scenario says how its numbers were reached ("Why these numbers?" in the Scenario Manager): <b className="text-green-300">Sourced</b> means taken from a real event, <b className="text-cyan-300">Scaled</b> means scaled from a real event, and <b className="text-amber-300">Illustrative</b> means a labelled assumption.</p>
+                                    <p className="text-slate-400">{methodNote}</p>
+                                    <p className="text-slate-400 mt-2">Energy flows: {GAS_CV_NOTE}</p>
+                                </div>
+                                <div>
+                                    <h4 className="font-bold text-slate-200 mb-2">Values used</h4>
+                                    <div className="space-y-2">
+                                        {Object.values(ASSUMPTIONS).map(a => (
+                                            <div key={a.id} className="bg-slate-950/50 p-3 rounded border border-slate-800">
+                                                <div className="flex justify-between gap-3 flex-wrap">
+                                                    <span className="font-bold text-white">{a.label}</span>
+                                                    <span className="font-mono text-cyan-300">{a.value.toLocaleString()} {a.unit} <span className={`ml-2 text-[10px] px-1.5 rounded border ${a.kind === 'sourced' ? 'text-green-300 border-green-800' : 'text-amber-300 border-amber-800'}`}>{a.kind === 'sourced' ? 'Sourced' : 'Assumption'}</span></span>
+                                                </div>
+                                                <div className="text-slate-400 text-xs mt-1">{a.basis}</div>
+                                                {a.source && <a href={a.source.url} target="_blank" rel="noopener noreferrer" className="text-xs text-cyan-400 hover:underline">{a.source.title}</a>}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div>
+                                    <h4 className="font-bold text-slate-200 mb-2">Real events used as reference points</h4>
+                                    <div className="space-y-2">
+                                        {REFERENCE_EVENTS.map(e => (
+                                            <div key={e.name} className="bg-slate-950/50 p-3 rounded border border-slate-800">
+                                                <div className="font-bold text-white">{e.name} <span className="text-slate-500 font-normal">· {e.date}</span></div>
+                                                <div className="text-slate-400 text-xs">{e.summary}</div>
+                                                <a href={e.source.url} target="_blank" rel="noopener noreferrer" className="text-xs text-cyan-400 hover:underline">{e.source.title}</a>
                                             </div>
                                         ))}
                                     </div>

@@ -31,6 +31,9 @@ import GenerationListPanel from './components/GenerationListPanel';
 import GridHistoryModal from './components/GridHistoryModal';
 import AiKeyModal from './components/AiKeyModal';
 import LiveSystemsPanel from './components/LiveSystemsPanel';
+import EnergyFlowsPanel from './components/EnergyFlowsPanel';
+import { buildFlows } from './services/flows';
+import { buildTimeline, methodNote } from './services/impactModel';
 import { fetchInterconnectorFlows, fetchRegionalCarbon, fetchFloodWarnings, fetchGasSnapshot, fetchWeatherWarnings, fetchSystemWarnings, InterconnectorFlow, RegionalCarbon, FloodWarning, GasSnapshot, WeatherWarning, SystemWarning } from './services/liveSystems';
 import { hasAiKey, onAiKeyChange, onAiKeyRequired } from './services/aiKey';
 
@@ -42,7 +45,7 @@ import {
     ArrowsPointingOutIcon, ArrowsPointingInIcon, ShieldCheckIcon,
     ChevronUpIcon, MinusIcon, ListBulletIcon, ChatBubbleLeftRightIcon, WrenchScrewdriverIcon, PauseCircleIcon,
     ClockIcon, ChartBarIcon, ArrowPathRoundedSquareIcon, MapIcon, TruckIcon, PowerIcon, MapPinIcon,
-    StopCircleIcon, MagnifyingGlassIcon, StopIcon, CloudIcon, SparklesIcon
+    StopCircleIcon, MagnifyingGlassIcon, StopIcon, CloudIcon, SparklesIcon, ArrowsRightLeftIcon
 } from '@heroicons/react/24/solid';
 
 const getAIStudio = () => (window as any).aistudio;
@@ -117,7 +120,8 @@ const PANEL_CONFIG: Record<string, { title: string, abbr: string, icon: any }> =
     'supply_chain': { title: 'Supply Chain', abbr: 'Supply', icon: TruckIcon },
     'reporting': { title: 'Reporting', abbr: 'Report', icon: PrinterIcon },
     'reset_view': { title: 'View Control', abbr: 'View', icon: StopCircleIcon },
-    'live_systems': { title: 'Live Systems', abbr: 'Live', icon: SignalIcon }
+    'live_systems': { title: 'Live Systems', abbr: 'Live', icon: SignalIcon },
+    'flows': { title: 'Energy Flows', abbr: 'Flows', icon: ArrowsRightLeftIcon }
 };
 
 const PinnedItem = ({ id, onUnpin }: { id: string, onUnpin: (id: string, x?: number, y?: number) => void }) => {
@@ -167,6 +171,7 @@ export const App: React.FC = () => {
     const [weatherWarnings, setWeatherWarnings] = useState<WeatherWarning[]>([]);
     const [systemWarnings, setSystemWarnings] = useState<SystemWarning[]>([]);
     const [liveSystemsUpdated, setLiveSystemsUpdated] = useState<Date | null>(null);
+    const energyFlows = useMemo(() => buildFlows(icFlows, gas), [icFlows, gas]);
     useEffect(() => {
         const load = async () => {
             await Promise.allSettled([
@@ -242,7 +247,7 @@ export const App: React.FC = () => {
 
     // Panels that start minimized (Data Sync removed)
     // Panels open at start: Regional Network and Live Outages everywhere; Live Systems too on large screens (>= 1600 px).
-    const INITIAL_MINIMIZED = new Set(['infra', 'engineering_work', 'standby_list', 'chat', 'supply_chain', 'reporting', 'reset_view', 'scenarios_pane', 'data_sync',
+    const INITIAL_MINIMIZED = new Set(['infra', 'engineering_work', 'standby_list', 'chat', 'supply_chain', 'reporting', 'reset_view', 'scenarios_pane', 'data_sync', 'flows',
         ...(window.innerWidth < 1600 ? ['live_systems'] : [])]);
     const [minimizedPanels, setMinimizedPanels] = useState<Set<string>>(new Set(INITIAL_MINIMIZED));
     
@@ -828,26 +833,9 @@ export const App: React.FC = () => {
         setIsLoading(true);
         setLoadingProgress(0);
         setLoadingMessage("Calculating Impact...");
-        const individualTimelines = await Promise.all(selected.map(s => calculateScenarioImpact(s)));
+        // Transparent impact model (services/impactModel.ts): no AI, no random numbers
+        const mergedTimeline = buildTimeline(selected);
         setLoadingProgress(50);
-        
-        const maxDuration = Math.max(...individualTimelines.map(t => t.length));
-        const mergedTimeline: TimelineStep[] = [];
-        let runningCumulativeCost = 0; 
-        for (let i = 0; i < maxDuration; i++) {
-            let totalConsumers = 0; let dailyTotalCost = 0;
-            individualTimelines.forEach(t => {
-                if (t[i]) {
-                    totalConsumers += t[i].consumersOffline;
-                    dailyTotalCost += t[i].costMillions; 
-                }
-            });
-            runningCumulativeCost += dailyTotalCost;
-            mergedTimeline.push({
-                day: i, consumersOffline: totalConsumers, costMillions: parseFloat(runningCumulativeCost.toFixed(2)),
-                restorationPct: 100, activeAlerts: [], description: `Day ${i}`
-            });
-        }
 
         setTimeline(mergedTimeline);
         setActiveScenarios(selected);
@@ -977,8 +965,8 @@ export const App: React.FC = () => {
     };
 
     const isGrowthMode = activeScenarios.some(s => s.category === 'Growth');
-    const metricLabel = isGrowthMode ? "Capacity Added" : "Total Offline";
-    const costLabel = isGrowthMode ? "Investment" : "Cumul. Cost";
+    const metricLabel = isGrowthMode ? "MW added" : "Customers off";
+    const costLabel = isGrowthMode ? "Investment" : "Cost (VoLL)";
     const statusLabel = isGrowthMode ? "Historical Playback" : "SIMULATING";
 
     const cycleChartMode = () => {
@@ -1390,6 +1378,7 @@ export const App: React.FC = () => {
                             isScenarioComplete={isScenarioComplete}
                             generatorOutages={generatorOutages}
                             interconnectorFlows={icFlows}
+                            energyFlows={energyFlows.links}
                             regionalCarbon={regionalCarbon}
                             floodWarnings={floods?.warnings || []}
                             weatherWarnings={weatherWarnings}
@@ -1500,8 +1489,8 @@ export const App: React.FC = () => {
                                             onClick={(e) => { e.stopPropagation(); toggleLayer('Interconnector Flows'); }}
                                             className={`w-full flex items-center gap-2 px-2 py-1 rounded text-[10px] font-bold transition-all ${visibleLayers.has('Interconnector Flows') ? 'bg-slate-800 text-white' : 'text-slate-500 opacity-50'}`}
                                         >
-                                            <div className="w-2 h-2 rounded-full bg-green-400"></div>
-                                            Interconnector Flows
+                                            <div className="w-2 h-2 rounded-full bg-gradient-to-r from-cyan-400 to-amber-500"></div>
+                                            Energy Flows (power &amp; gas)
                                         </button>
                                         <button 
                                             onClick={(e) => { e.stopPropagation(); toggleLayer('Flood Warnings'); }}
@@ -1775,6 +1764,27 @@ export const App: React.FC = () => {
                         </DraggablePanel>
                     )}
 
+                    {/* Energy Flows Panel */}
+                    {!minimizedPanels.has('flows') && !pinnedPanels.has('flows') && (
+                        <DraggablePanel id="flows" title={PANEL_CONFIG['flows']?.title}
+                            key={`flows_${layoutKey}`}
+                            initialX={panelPositions['flows']?.x ?? Math.max(10, window.innerWidth - 640)}
+                            initialY={panelPositions['flows']?.y ?? 70}
+                            className="w-80"
+                            zIndex={getZIndex('flows')}
+                            onInteract={() => bringToFront('flows')}
+                        >
+                            <div className="relative bg-slate-900/90 backdrop-blur border border-slate-700 p-3 rounded-lg shadow-xl pointer-events-auto">
+                                <div className="absolute top-1 right-1 z-20 flex gap-1">
+                                    <button onClick={() => pinPanel('flows')} className="p-1 bg-slate-900/50 rounded hover:bg-slate-800 text-slate-400 hover:text-cyan-400" title="Pin"><MapPinIcon className="w-3 h-3" /></button>
+                                    <button onClick={() => toggleMinimize('flows')} className="p-1 bg-slate-900/50 rounded hover:bg-slate-800 text-slate-400 hover:text-white"><MinusIcon className="w-3 h-3" /></button>
+                                </div>
+                                <h3 className="text-[10px] font-bold text-white uppercase tracking-widest mb-2 flex items-center gap-1"><ArrowsRightLeftIcon className="w-3 h-3 text-amber-400" /> Energy flows in and out of GB</h3>
+                                <EnergyFlowsPanel flows={energyFlows} updated={liveSystemsUpdated} />
+                            </div>
+                        </DraggablePanel>
+                    )}
+
                     {/* Engineering Work Panel (Right - Independent) */}
                     {!minimizedPanels.has('engineering_work') && !pinnedPanels.has('engineering_work') && maintenanceAssets.length > 0 && (
                         <DraggablePanel id="engineering_work" title={PANEL_CONFIG['engineering_work']?.title}
@@ -1944,12 +1954,22 @@ export const App: React.FC = () => {
                                                 <div className="bg-slate-800 p-2 rounded flex justify-between items-center">
                                                     <div className="text-[10px] text-slate-500 uppercase">{costLabel}</div>
                                                     <div className={`text-base font-mono font-bold ${isGrowthMode ? 'text-green-400' : 'text-yellow-500'}`}>
-                                                        ${(currentStats.cost || 0).toFixed(1)}M
+                                                        {isGrowthMode ? 'not modelled' : `£${(currentStats.cost || 0).toFixed(1)}m`}
                                                     </div>
                                                 </div>
                                             )}
                                         </div>
                                         
+                                        {chartMode === 'normal' && !isGrowthMode && (
+                                            <details className="text-[10px] text-slate-400 mb-1">
+                                                <summary className="cursor-pointer hover:text-white">{timeline[currentDay]?.label || ''} · How these figures are worked out</summary>
+                                                <div className="mt-1 space-y-1">
+                                                    <div>{methodNote}</div>
+                                                    {activeScenarios.map(sc => <div key={sc.id}><b className="text-slate-300">{sc.name}:</b> {sc.rationale || 'No sourced model; a simple default shape is used.'}</div>)}
+                                                    <div className="text-slate-500">Energy not supplied so far: {(timeline[currentDay]?.energyUnservedMWh || 0).toLocaleString()} MWh. All values: Help → Scenario model.</div>
+                                                </div>
+                                            </details>
+                                        )}
                                         {chartMode === 'normal' && (
                                             <div className="w-full relative mt-2 animate-slideDown h-48">
                                                 <ImpactChart 
@@ -2031,6 +2051,7 @@ export const App: React.FC = () => {
                                     liveSystemsSummary={[
                                         icFlows.length ? `Interconnector flows (MW, +import/-export): ${icFlows.map(f => `${f.name} ${f.mw}`).join(', ')}` : '',
                                         gas ? `Gas NTS: demand ${gas.ntsDemand} mcm/d, supply ${gas.totalSupply} mcm/d, linepack ${gas.linepack} mcm, to power stations ${gas.powerStations} mcm/d` : '',
+                                        energyFlows.hasGasDetail ? `Gas by route (mcm/d, +into GB/-out): ${energyFlows.links.filter(l => l.kind === 'gas').map(l => `${l.name} [${l.group}] ${l.value}`).join(', ')}. Imports (Norway pipeline + LNG + continent) ≈ ${energyFlows.gasImportShare !== null ? Math.round(energyFlows.gasImportShare * 100) : '?'}% of supply; St Fergus is mixed UK/Norway. Energy equivalents: electricity in ${energyFlows.elecImportGW.toFixed(1)} GW / out ${energyFlows.elecExportGW.toFixed(1)} GW; gas imported ${energyFlows.gasImportGW.toFixed(0)} GW (at 39.5 MJ/m3)` : '',
                                         `Met Office warnings: ${weatherWarnings.length ? weatherWarnings.map(w => `${w.level} ${w.type} - ${w.region}`).join('; ') : 'none'}`,
                                         floods ? `EA flood warnings (England): ${floods.warnings.length} warnings (${floods.warnings.filter(w => w.level === 1).length} severe), ${floods.alerts} alerts${floods.warnings.length ? ': ' + floods.warnings.slice(0, 8).map(w => w.area).join('; ') : ''}` : '',
                                         Object.keys(regionalCarbon).length ? `Regional carbon intensity (gCO2/kWh): ${Object.entries(regionalCarbon).map(([k, v]) => `${k} ${v.intensity}`).join(', ')}` : '',
@@ -2086,6 +2107,11 @@ export const App: React.FC = () => {
                             {minimizedPanels.has('live_systems') && (
                                 <button onClick={() => restorePanel('live_systems')} className="p-2 hover:bg-slate-800 rounded text-cyan-400 hover:text-white" title="Live Systems">
                                     <SignalIcon className="w-6 h-6" />
+                                </button>
+                            )}
+                            {minimizedPanels.has('flows') && (
+                                <button onClick={() => restorePanel('flows')} className="p-2 hover:bg-slate-800 rounded text-amber-400 hover:text-white" title="Energy flows in and out of GB">
+                                    <ArrowsRightLeftIcon className="w-6 h-6" />
                                 </button>
                             )}
                              {minimizedPanels.has('grid_status') && (
@@ -2147,6 +2173,7 @@ export const App: React.FC = () => {
                             ['system_monitor', 'Grid', ShieldCheckIcon],
                             ['grid_status', 'Outages', ExclamationTriangleIcon],
                             ['live_systems', 'Live', SignalIcon],
+                            ['flows', 'Flows', ArrowsRightLeftIcon],
                             ['infra', 'Layers', FunnelIcon],
                             ['scenarios_pane', 'Risks', PlayIcon],
                             ['chat', 'Analyst', ChatBubbleLeftRightIcon],
@@ -2183,6 +2210,7 @@ export const App: React.FC = () => {
                         <TimelineControl 
                             currentDay={currentDay} 
                             totalDays={timeline.length - 1} 
+                            labels={timeline.map(t => t.label || `Day ${t.day}`)}
                             isPlaying={isPlaying} 
                             playbackSpeed={playbackSpeed}
                             onPlayPause={() => setIsPlaying(!isPlaying)} 

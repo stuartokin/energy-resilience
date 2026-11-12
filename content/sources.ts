@@ -4,7 +4,7 @@
 export interface DataSource { name: string; usedFor: string; refresh: string; licence: string; url: string; via?: string; }
 
 export const DATA_SOURCES: DataSource[] = [
-    { name: 'Elexon Insights (BMRS)', usedFor: 'Grid frequency, demand and history; generation by fuel; interconnector flows', refresh: 'Every minute (app refresh)', licence: 'Elexon BMRS data licence', url: 'https://bmrs.elexon.co.uk/api-documentation' },
+    { name: 'Elexon Insights (BMRS)', usedFor: 'Grid frequency, demand and history; generation by fuel; interconnector flows in both directions (FUELINST)', refresh: 'Every minute (app refresh)', licence: 'Elexon BMRS data licence', url: 'https://bmrs.elexon.co.uk/api-documentation' },
     { name: 'Elexon REMIT', usedFor: 'Power station and interconnector outages', refresh: 'Every 5 minutes', licence: 'Elexon BMRS data licence', url: 'https://bmrs.elexon.co.uk/remit' },
     { name: 'Elexon system warnings (SYSWARN)', usedFor: 'NESO margin and demand-control notices', refresh: 'Every 5 minutes', licence: 'Elexon BMRS data licence', url: 'https://bmrs.elexon.co.uk/system-warnings' },
     { name: 'NESO Carbon Intensity API', usedFor: 'GB and regional generation mix and carbon intensity', refresh: 'Every 5 minutes', licence: 'CC BY 4.0', url: 'https://carbonintensity.org.uk' },
@@ -14,7 +14,7 @@ export const DATA_SOURCES: DataSource[] = [
     { name: 'NGED Connected Data', usedFor: 'Live power cuts (Midlands, South West, South Wales)', refresh: 'Every 2 minutes', licence: 'NGED Open Data Licence', url: 'https://connecteddata.nationalgrid.co.uk/dataset/live-power-cuts', via: 'Cloudflare Worker' },
     { name: 'SSEN Power Track', usedFor: 'Live power cuts (North Scotland, Southern England)', refresh: 'Every 2 minutes', licence: 'CC BY 4.0', url: 'https://data.ssen.co.uk/@ssen-distribution/realtime_outage_dataset', via: 'Cloudflare Worker' },
     { name: 'SP Energy Networks open data', usedFor: 'Live power cuts (Central & South Scotland, Merseyside & North Wales)', refresh: 'Every 2 minutes', licence: 'CC BY 4.0', url: 'https://spenergynetworks.opendatasoft.com/explore/dataset/national-energy-outage-data/', via: 'Cloudflare Worker (API key)' },
-    { name: 'National Gas Data Portal', usedFor: 'Gas demand, supply and linepack', refresh: 'Every 5 minutes', licence: 'National Gas data terms', url: 'https://data.nationalgas.com', via: 'Cloudflare Worker' },
+    { name: 'National Gas Data Portal', usedFor: 'Gas demand, supply, linepack, and flows by entry point and export point (instantaneous flows)', refresh: 'Every 5 minutes (2-minute readings)', licence: 'National Gas data terms', url: 'https://data.nationalgas.com', via: 'Cloudflare Worker' },
     { name: 'Met Office warnings', usedFor: 'Weather warnings', refresh: 'Every 5 minutes', licence: 'Crown copyright (Open Government Licence)', url: 'https://www.metoffice.gov.uk/weather/warnings-and-advice/uk-warnings', via: 'Cloudflare Worker' },
     { name: 'Environment Agency flood monitoring', usedFor: 'Flood warnings (England)', refresh: 'Every 5 minutes', licence: 'Open Government Licence v3', url: 'https://environment.data.gov.uk/flood-monitoring/doc/reference' },
     { name: 'OpenStreetMap (Geofabrik extract, Overpass, Nominatim)', usedFor: 'All energy infrastructure on the map (weekly tiles), place search, Northern Ireland outline', refresh: 'Weekly tiles; live detail when zoomed in', licence: 'ODbL', url: 'https://www.openstreetmap.org/copyright' },
