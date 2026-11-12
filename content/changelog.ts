@@ -6,6 +6,18 @@ export interface ChangeEntry { version: string; date: string; title: string; cha
 
 export const CHANGELOG: ChangeEntry[] = [
     {
+        version: '3.3.0',
+        date: '2026-11-12',
+        title: 'Phase 3 (part 1): new map engine and every energy asset in the UK',
+        changes: [
+            'The map now runs on MapLibre, which is built for large amounts of data and is smoother on phones and big screens.',
+            'Every power and gas asset mapped in OpenStreetMap for the UK is built into map tiles once a week: power stations, wind turbines, solar arrays, batteries, substations, converter stations, lines and cables of every voltage, gas pipelines and compressor sites, and data centres. Rooftop solar is left out.',
+            'Detail appears as you zoom in: grid lines and power stations nationally, substations from zoom 10, individual turbines and solar arrays and local 11 kV lines from zoom 11-12.',
+            'Click anything for its details (name, operator, voltage, capacity where mapped). Click a substation to highlight the lines connected to it.',
+            'Until the first weekly tile build has run, the map shows the national snapshot as before.',
+        ],
+    },
+    {
         version: '3.2.0',
         date: '2026-11-12',
         title: 'Phase 2: works on any screen, movable and resizable panels, new icons',

@@ -1,0 +1,184 @@
+# Planetiler schema: every energy asset in the UK from OpenStreetMap, as vector map tiles.
+# Built weekly by GitHub Actions (see README) into public/tiles/energy.pmtiles, which the
+# map reads directly. Detail appears as you zoom in: grid lines and power stations first,
+# then substations, then individual turbines, solar arrays and local lines.
+#
+# Run locally (needs Java 21+):
+#   java -jar planetiler.jar generate-custom --schema=scripts/energy-tiles.yml \
+#        --output=public/tiles/energy.pmtiles --download --force
+
+schema_name: GB energy infrastructure
+schema_description: Power and gas infrastructure from OpenStreetMap
+attribution: '<a href="https://www.openstreetmap.org/copyright" target="_blank">&copy; OpenStreetMap contributors</a>'
+
+sources:
+  osm:
+    type: osm
+    url: geofabrik:united-kingdom
+
+layers:
+  # ---------- Electricity lines and cables ----------
+  - id: power_lines
+    features:
+      - source: osm
+        geometry: line
+        min_zoom: 4
+        include_when:
+          power: line
+        attributes: &line_attrs
+          - key: power
+          - key: voltage
+          - key: name
+          - key: ref
+          - key: operator
+          - key: circuits
+          - key: frequency
+          - key: location
+          - key: line
+      - source: osm
+        geometry: line
+        min_zoom: 6
+        include_when:
+          power: cable
+        attributes: *line_attrs
+      - source: osm
+        geometry: line
+        min_zoom: 11
+        include_when:
+          power: minor_line
+        attributes: *line_attrs
+
+  # ---------- Substations and HVDC converter stations ----------
+  - id: substations
+    features:
+      - source: osm
+        geometry: polygon
+        min_zoom: 8
+        include_when:
+          power: [substation, converter]
+        attributes: &sub_attrs
+          - key: power
+          - key: substation
+          - key: voltage
+          - key: name
+          - key: ref
+          - key: operator
+      - source: osm
+        geometry: point
+        min_zoom: 10
+        include_when:
+          power: [substation, converter]
+        attributes: *sub_attrs
+
+  # ---------- Power stations (whole sites) ----------
+  - id: plants
+    features:
+      - source: osm
+        geometry: polygon
+        min_zoom: 5
+        include_when:
+          power: plant
+        attributes: &plant_attrs
+          - key: power
+          - key: name
+          - key: operator
+          - key: plant:source
+          - key: plant:method
+          - key: plant:output:electricity
+          - key: plant:storage
+          - key: start_date
+          - key: repd:id
+      - source: osm
+        geometry: point
+        min_zoom: 5
+        include_when:
+          power: plant
+        attributes: *plant_attrs
+
+  # ---------- Individual generators: turbines, solar arrays, batteries (not rooftop solar) ----------
+  - id: generators
+    features:
+      - source: osm
+        geometry: point
+        min_zoom: 11
+        include_when:
+          power: generator
+        exclude_when:
+          location: [roof, rooftop]
+          generator:place: [roof, rooftop]
+        attributes: &gen_attrs
+          - key: power
+          - key: name
+          - key: operator
+          - key: generator:source
+          - key: generator:method
+          - key: generator:type
+          - key: generator:output:electricity
+      - source: osm
+        geometry: polygon
+        min_zoom: 12
+        include_when:
+          power: generator
+        exclude_when:
+          location: [roof, rooftop]
+          generator:place: [roof, rooftop]
+          building: __any__
+        attributes: *gen_attrs
+
+  # ---------- Gas network ----------
+  - id: gas
+    features:
+      - source: osm
+        geometry: line
+        min_zoom: 6
+        include_when:
+          __all__:
+            - man_made: pipeline
+            - substance: [gas, natural_gas, cng, lng, hydrogen]
+        attributes: &gas_attrs
+          - key: man_made
+          - key: pipeline
+          - key: substance
+          - key: name
+          - key: operator
+          - key: location
+          - key: diameter
+          - key: pressure
+      - source: osm
+        geometry: polygon
+        min_zoom: 9
+        include_when:
+          pipeline: substation
+        attributes: *gas_attrs
+      - source: osm
+        geometry: point
+        min_zoom: 9
+        include_when:
+          pipeline: substation
+        attributes: *gas_attrs
+
+  # ---------- Large demand: data centres ----------
+  - id: demand
+    features:
+      - source: osm
+        geometry: polygon
+        min_zoom: 10
+        include_when:
+          telecom: data_center
+        attributes: &dc_attrs
+          - key: telecom
+          - key: building
+          - key: name
+          - key: operator
+      - source: osm
+        geometry: polygon
+        min_zoom: 10
+        include_when:
+          building: data_center
+        attributes: *dc_attrs
+      - source: osm
+        geometry: point
+        min_zoom: 10
+        include_when:
+          telecom: data_center
+        attributes: *dc_attrs

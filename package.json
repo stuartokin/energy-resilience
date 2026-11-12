@@ -11,13 +11,13 @@
   "dependencies": {
     "@google/genai": "^1.30.0",
     "@heroicons/react": "^2.2.0",
-    "leaflet": "^1.9.4",
+    "maplibre-gl": "^4.7.1",
+    "pmtiles": "^3.2.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "recharts": "^3.5.1"
   },
   "devDependencies": {
-    "@types/leaflet": "^1.9.12",
     "@types/node": "^22.14.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",

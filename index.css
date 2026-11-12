@@ -23,21 +23,7 @@ html { font-size: var(--ui-font-size, 16px); }
       .neon-glow {
         box-shadow: 0 0 10px rgba(34, 211, 238, 0.5);
       }
-      /* Leaflet Customization */
-      .leaflet-container {
-        background-color: #0f172a !important;
-        font-family: inherit;
-      }
-      .leaflet-popup-content-wrapper, .leaflet-popup-tip {
-        background: #1e293b;
-        color: #f8fafc;
-        border: 1px solid #334155;
-        border-radius: 0.5rem;
-      }
-      .leaflet-popup-content {
-        margin: 0;
-        padding: 0;
-      }
+
       /* Pulsing Marker for Outages */
       /* Darken the grey basemap to match the app's slate theme */
       .basemap-tiles {
@@ -47,11 +33,6 @@ html { font-size: var(--ui-font-size, 16px); }
         background: transparent;
         border: none;
       }
-      .leaflet-control-attribution {
-        background: rgba(15, 23, 42, 0.8) !important;
-        color: #64748b !important;
-      }
-      .leaflet-control-attribution a { color: #94a3b8 !important; }
       .outage-icon {
         background: transparent;
         border: none;
@@ -118,3 +99,11 @@ html { font-size: var(--ui-font-size, 16px); }
 .powercut-pulse { position: relative; width: 22px; height: 22px; }
 .powercut-pulse::after { content: ''; position: absolute; inset: 0; border-radius: 50%; box-shadow: 0 0 0 0 rgba(239,68,68,0.7); animation: pulse-ring 2s infinite; }
 @keyframes pulse-ring { 0% { box-shadow: 0 0 0 0 rgba(239,68,68,0.6); } 70% { box-shadow: 0 0 0 12px rgba(239,68,68,0); } 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); } }
+
+/* MapLibre popups and attribution in the dark theme */
+.maplibregl-popup-content { background: #1e293b; color: #f8fafc; border: 1px solid #334155; border-radius: 0.5rem; padding: 0; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+.maplibregl-popup-tip { border-top-color: #1e293b !important; border-bottom-color: #1e293b !important; }
+.maplibregl-popup-close-button { color: #94a3b8; font-size: 18px; padding: 0 6px; }
+.maplibregl-ctrl-attrib { background: rgba(15,23,42,0.8) !important; color: #64748b; font-size: 10px; }
+.maplibregl-ctrl-attrib a { color: #94a3b8 !important; }
+.maplibregl-ctrl-attrib-button { filter: invert(1); }

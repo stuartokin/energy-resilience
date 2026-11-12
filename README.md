@@ -19,10 +19,11 @@ A live picture of the GB energy system - infrastructure, power cuts, generator o
 | Path | What it is |
 |---|---|
 | `index.html`, `index.tsx`, `App.tsx` | The app (React + TypeScript, built with Vite). `App.tsx` holds the layout, panels and state. |
-| `components/` | Map (`MapVisualization.tsx`), panels, modals, help (`HelpModal.tsx`), live systems panel, AI key box. |
+| `components/` | Map (`MapVisualization.tsx`, MapLibre GL), panels, modals, help (`HelpModal.tsx`), live systems panel, AI key box. |
 | `components/DraggablePanel.tsx` | Every floating panel: move (mouse/touch), resize, A−/A+, saved layout; becomes a bottom sheet on phones. |
 | `components/layout.tsx` | Screen modes (desktop / tablet / phone), saved layout, global text size. |
 | `components/icons.ts` | The icon set, line colours by voltage, and the legend definitions. |
+| `scripts/energy-tiles.yml` | Planetiler schema: which OpenStreetMap power and gas features go into the weekly map tiles (`tiles/energy.pmtiles`), and from which zoom level. |
 | `index.css`, `tailwind.config.js`, `postcss.config.js` | Styling (Tailwind, built at publish time). |
 | `services/geminiService.ts` | Live data fetching (Elexon, NESO, DNOs, REMIT), the OpenStreetMap snapshot loader, and all AI (Gemini) features. |
 | `services/liveSystems.ts` | Interconnector flows, regional carbon, flood warnings, gas, weather warnings, NESO system notices. |
@@ -45,7 +46,8 @@ A live picture of the GB energy system - infrastructure, power cuts, generator o
 
 ```
  Visitor's browser ──► GitHub Pages (this app)
-        │                  └─ data/*.json  ◄── built weekly by GitHub Actions (OpenStreetMap, NESO, Power Station Dictionary)
+        │                  ├─ tiles/energy.pmtiles ◄── built weekly by GitHub Actions (Planetiler + OpenStreetMap UK extract)
+        │                  └─ data/*.json  ◄── built on each publish (OpenStreetMap snapshot, NESO, Power Station Dictionary)
         ├──► Elexon, NESO, UKPN, Northern Powergrid, Environment Agency   (read directly, every 1-5 min)
         ├──► Cloudflare Worker ──► NGED, SSEN, SPEN, National Gas, Met Office   (cached 2 min)
         └──► Google Gemini (only if the visitor adds their own key)
@@ -179,6 +181,6 @@ Licences and credits: [ATTRIBUTION.md](ATTRIBUTION.md).
 
 1. ~~Phase 1 - real data only, working history charts, help and versioning~~ (v3.1.0)
 2. ~~Phase 2 - movable, resizable, text-size adjustable panels; layouts for every screen; new icon set~~ (v3.2.0)
-3. Phase 3 - MapLibre map with weekly-built tiles of every energy asset in GB (solar, batteries, wind, substations, lines, cables, pipes) and how they connect (DNO Embedded Capacity Registers)
+3. ~~Phase 3 part 1 - MapLibre map with weekly tiles of every UK energy asset; substation connections~~ (v3.3.0). Part 2 - which generators connect to which substation (DNO Embedded Capacity Registers)
 4. Phase 4 - a curated library of realistic risk scenarios in every category, with a transparent, sourced impact model
 5. Phase 5 - weekly research agents that propose new scenarios and sources for review
