@@ -26,6 +26,7 @@ import ReportModal from './components/ReportModal';
 import SupplyChainModal from './components/SupplyChainModal';
 import DraggablePanel from './components/DraggablePanel';
 import { useLayout, clearSavedLayout, applyFontSize, getFontSize, FONT_SIZES } from './components/layout';
+import { statusOf } from './services/health';
 import GenerationListPanel from './components/GenerationListPanel';
 import GridHistoryModal from './components/GridHistoryModal';
 import AiKeyModal from './components/AiKeyModal';
@@ -626,7 +627,9 @@ export const App: React.FC = () => {
         // Auto-fetch details on stable zoom in
         // Load local detail once per area (areas already loaded are skipped).
         const alreadyLoaded = loadedAreasRef.current.some(a => Math.abs(a.lat - center.lat) < 0.15 && Math.abs(a.lng - center.lng) < 0.25);
-        if (center.zoom >= 11 && allowBackgroundUpdates && !alreadyLoaded) {
+        // Not needed when the weekly map tiles are available - they already contain all local infrastructure
+        const tilesLoaded = statusOf('tiles').status === 'Operational';
+        if (center.zoom >= 11 && allowBackgroundUpdates && !alreadyLoaded && !tilesLoaded) {
             if (mapDebounceRef.current) clearTimeout(mapDebounceRef.current);
             mapDebounceRef.current = setTimeout(async () => {
                 loadedAreasRef.current.push({ lat: center.lat, lng: center.lng });

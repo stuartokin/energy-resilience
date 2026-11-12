@@ -6,6 +6,12 @@ export interface ChangeEntry { version: string; date: string; title: string; cha
 
 export const CHANGELOG: ChangeEntry[] = [
     {
+        version: '3.3.1',
+        date: '2026-11-12',
+        title: 'Fix: no more live OpenStreetMap queries when the map tiles are available',
+        changes: ['When you zoom in, the app no longer asks the busy public OpenStreetMap servers for local detail if the weekly map tiles have loaded - the tiles already contain it.'],
+    },
+    {
         version: '3.3.0',
         date: '2026-11-12',
         title: 'Phase 3 (part 1): new map engine and every energy asset in the UK',

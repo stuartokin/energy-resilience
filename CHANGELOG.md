@@ -3,6 +3,9 @@
 Newest first. Mirrored in the app under **Help → What's new** (`content/changelog.ts`).
 Versioning: MAJOR = big change in what the app is; MINOR = new features or data sources; PATCH = fixes.
 
+## 3.3.1 - 2026-11-12
+- No live OpenStreetMap (Overpass) queries on zoom when the weekly tiles are available.
+
 ## 3.3.0 - 2026-11-12 - Phase 3 (part 1): MapLibre and every UK energy asset
 - Map engine switched from Leaflet to MapLibre GL.
 - Weekly vector tiles (PMTiles) of all OSM power and gas infrastructure in the UK, built by Planetiler in GitHub Actions (`scripts/energy-tiles.yml`), cached for the week.
