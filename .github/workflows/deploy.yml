@@ -25,6 +25,31 @@ jobs:
         with:
           node-version: 20
       - run: npm install
+
+      # ---- Energy map tiles: every OSM power and gas asset in the UK (rebuilt once a week) ----
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Week number
+        id: week
+        run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+      - name: Reuse this week's energy tiles if already built
+        id: tiles
+        uses: actions/cache@v4
+        with:
+          path: public/tiles
+          key: energy-tiles-${{ steps.week.outputs.week }}-${{ hashFiles('scripts/energy-tiles.yml') }}
+      - name: Build energy tiles from OpenStreetMap
+        if: steps.tiles.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 60
+        run: |
+          curl -sSL -o planetiler.jar https://github.com/onthegomap/planetiler/releases/latest/download/planetiler.jar
+          java -Xmx12g -jar planetiler.jar generate-custom --schema=scripts/energy-tiles.yml --output=energy.pmtiles --download --force
+          # Only publish (and cache) the tiles if the build succeeded
+          mkdir -p public/tiles && mv energy.pmtiles public/tiles/ && ls -lh public/tiles
+
       - name: Build OpenStreetMap infrastructure snapshot
         run: node scripts/build-osm-snapshot.mjs
         continue-on-error: true
