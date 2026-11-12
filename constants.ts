@@ -1,6 +1,6 @@
 import { AssetType, InfrastructureAsset, RegionConfig, RiskScenario, TimelineStep, DNORegion } from './types';
 
-export const APP_VERSION = "3.1.0"; // keep in step with content/changelog.ts and CHANGELOG.md
+export const APP_VERSION = "3.2.0"; // keep in step with content/changelog.ts and CHANGELOG.md
 // Set at build time (vite.config.ts) - the date and commit of the published build.
 declare const __BUILD_DATE__: string;
 declare const __BUILD_COMMIT__: string;
@@ -27,29 +27,29 @@ export const ASSET_TYPES: AssetType[] = [
     { id: 'wind_offshore', label: 'Offshore Wind', category: 'Generation', color: '#22d3ee', icon: ICONS.WIND }, // Cyan
     { id: 'wind_onshore', label: 'Onshore Wind', category: 'Generation', color: '#10b981', icon: ICONS.WIND }, // Emerald
     { id: 'solar', label: 'Solar Farm', category: 'Generation', color: '#facc15', icon: ICONS.SOLAR }, // Yellow
-    { id: 'gas', label: 'Gas Terminal/Gen', category: 'Generation', color: '#f97316', icon: ICONS.GAS }, // Orange
-    { id: 'hydro', label: 'Hydro / Pumped Storage', category: 'Generation', color: '#3b82f6', icon: ICONS.GAS }, // Blue (Reuse Gas/Liquid shape)
-    { id: 'storage', label: 'Battery Storage (BESS)', category: 'Generation', color: '#84cc16', icon: ICONS.BATTERY }, // Lime
+    { id: 'gas', label: 'Gas power station', category: 'Generation', color: '#f97316', icon: ICONS.GAS }, // Orange
+    { id: 'hydro', label: 'Hydro / Pumped Storage', category: 'Generation', color: '#60a5fa', icon: ICONS.GAS }, // Blue (Reuse Gas/Liquid shape)
+    { id: 'storage', label: 'Battery Storage (BESS)', category: 'Generation', color: '#a3e635', icon: ICONS.BATTERY }, // Lime
     
     { id: 'substation', label: 'National Grid Substation', category: 'Transmission', color: '#eab308', icon: ICONS.GRID }, // Yellow
-    { id: 'compressor', label: 'Gas Compressor Stn', category: 'Transmission', color: '#57534e', icon: ICONS.FACTORY }, // Stone
-    { id: 'transmission_elec', label: 'HV Transmission Line', category: 'Transmission', color: '#60a5fa' }, // Blue-400
+    { id: 'compressor', label: 'Gas Compressor Stn', category: 'Transmission', color: '#a8a29e', icon: ICONS.FACTORY }, // Stone
+    { id: 'transmission_elec', label: 'HV Transmission Line', category: 'Transmission', color: '#0ea5e9' }, // Blue-400
     { id: 'distribution_elec', label: 'Distribution Line', category: 'Distribution', color: '#f59e0b' }, // Amber
-    { id: 'pipeline_gas', label: 'Gas Pipeline', category: 'Transmission', color: '#78716c' }, // Stone-500
+    { id: 'pipeline_gas', label: 'Gas Pipeline', category: 'Transmission', color: '#a8a29e' }, // Stone-500
     
     { id: 'interconnector', label: 'Interconnector', category: 'Interconnector', color: '#ec4899', icon: ICONS.CONNECTOR }, // Pink
     
     // UKPN Specific Assets
-    { id: 'ukpn_gsp', label: 'UKPN Grid Supply Point', category: 'Distribution', color: '#dc2626', icon: ICONS.GRID }, // Red
-    { id: 'ukpn_bsp', label: 'UKPN Bulk Supply Point', category: 'Distribution', color: '#16a34a', icon: ICONS.GRID }, // Green
-    { id: 'ukpn_primary', label: 'UKPN Primary Substation', category: 'Distribution', color: '#d97706', icon: ICONS.GRID }, // Amber
+    { id: 'ukpn_gsp', label: 'UKPN Grid Supply Point', category: 'Distribution', color: '#eab308', icon: ICONS.GRID }, // Red
+    { id: 'ukpn_bsp', label: 'UKPN Bulk Supply Point', category: 'Distribution', color: '#f59e0b', icon: ICONS.GRID }, // Green
+    { id: 'ukpn_primary', label: 'UKPN Primary Substation', category: 'Distribution', color: '#f59e0b', icon: ICONS.GRID }, // Amber
     // SPEN Specific Assets
-    { id: 'spen_gsp', label: 'SPEN Grid Supply Point', category: 'Distribution', color: '#0ea5e9', icon: ICONS.GRID }, // Sky Blue
-    { id: 'spen_bsp', label: 'SPEN Bulk Supply Point', category: 'Distribution', color: '#8b5cf6', icon: ICONS.GRID }, // Violet
-    { id: 'spen_primary', label: 'SPEN Primary Substation', category: 'Distribution', color: '#6366f1', icon: ICONS.GRID }, // Indigo
+    { id: 'spen_gsp', label: 'SPEN Grid Supply Point', category: 'Distribution', color: '#eab308', icon: ICONS.GRID }, // Sky Blue
+    { id: 'spen_bsp', label: 'SPEN Bulk Supply Point', category: 'Distribution', color: '#f59e0b', icon: ICONS.GRID }, // Violet
+    { id: 'spen_primary', label: 'SPEN Primary Substation', category: 'Distribution', color: '#f59e0b', icon: ICONS.GRID }, // Indigo
 
     // Consumers
-    { id: 'datacentre', label: 'Major Datacentre', category: 'Retail', color: '#d946ef', icon: ICONS.SERVER }, // Fuchsia-500
+    { id: 'datacentre', label: 'Major Datacentre', category: 'Retail', color: '#e879f9', icon: ICONS.SERVER }, // Fuchsia-500
     
     // Custom Search
     { id: 'custom_search', label: 'Custom Search Result', category: 'Custom' as any, color: '#f43f5e', icon: ICONS.TRIANGLE }, // Rose-500

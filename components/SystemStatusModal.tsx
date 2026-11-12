@@ -9,7 +9,7 @@ interface SystemStatusModalProps {
 
 const SystemStatusModal: React.FC<SystemStatusModalProps> = ({ onClose, statuses }) => {
     return (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn" onClick={onClose}>
+        <div className="fixed inset-0 z-[500] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn" onClick={onClose}>
             <div className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-2xl shadow-2xl relative flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
                 <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-950 rounded-t-xl shrink-0">
                     <h2 className="text-lg font-bold text-white flex items-center gap-2">

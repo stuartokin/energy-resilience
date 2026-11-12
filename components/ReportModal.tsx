@@ -47,7 +47,7 @@ const ReportModal: React.FC<ReportModalProps> = ({ onClose, script, audioUrl, im
     const displayScript = script.replace(/\*\*/g, '');
 
     return (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn" onClick={onClose}>
+        <div className="fixed inset-0 z-[500] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn" onClick={onClose}>
             <div 
                 className="bg-slate-900 border border-cyan-500/50 rounded-xl w-full max-w-4xl shadow-2xl relative flex flex-col max-h-[90vh] overflow-hidden" 
                 onClick={e => e.stopPropagation()}

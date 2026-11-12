@@ -1,0 +1,120 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Global text size: set by the A-/A+ control (rem-based, so everything scales) */
+html { font-size: var(--ui-font-size, 16px); }
+
+      /* Custom Scrollbar for dark theme */
+      ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: #0f172a; 
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #334155; 
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #475569; 
+      }
+      .neon-glow {
+        box-shadow: 0 0 10px rgba(34, 211, 238, 0.5);
+      }
+      /* Leaflet Customization */
+      .leaflet-container {
+        background-color: #0f172a !important;
+        font-family: inherit;
+      }
+      .leaflet-popup-content-wrapper, .leaflet-popup-tip {
+        background: #1e293b;
+        color: #f8fafc;
+        border: 1px solid #334155;
+        border-radius: 0.5rem;
+      }
+      .leaflet-popup-content {
+        margin: 0;
+        padding: 0;
+      }
+      /* Pulsing Marker for Outages */
+      /* Darken the grey basemap to match the app's slate theme */
+      .basemap-tiles {
+        filter: brightness(0.55) contrast(1.1);
+      }
+      .asset-icon {
+        background: transparent;
+        border: none;
+      }
+      .leaflet-control-attribution {
+        background: rgba(15, 23, 42, 0.8) !important;
+        color: #64748b !important;
+      }
+      .leaflet-control-attribution a { color: #94a3b8 !important; }
+      .outage-icon {
+        background: transparent;
+        border: none;
+      }
+      .outage-dot {
+        width: 16px;
+        height: 16px;
+        background-color: #ef4444;
+        border: 2px solid white;
+        border-radius: 50%;
+        position: relative;
+        box-shadow: 0 0 0 0 rgba(239, 68, 68, 1);
+        animation: pulse-red 2s infinite;
+      }
+      @keyframes pulse-red {
+        0% {
+          transform: scale(0.95);
+          box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+        }
+        70% {
+          transform: scale(1);
+          box-shadow: 0 0 0 10px rgba(239, 68, 68, 0);
+        }
+        100% {
+          transform: scale(0.95);
+          box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+        }
+      }
+      
+      /* Generation Unit Status Indicators */
+      .gen-marker {
+        transition: all 0.3s ease;
+      }
+      .gen-active-dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        border: 2px solid white;
+        background-color: #22c55e; /* Green-500 */
+        box-shadow: 0 0 10px #22c55e;
+        animation: blink-green 3s infinite ease-in-out;
+      }
+      .gen-standby-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        border: 1px solid #94a3b8;
+        background-color: #475569; /* Slate-600 */
+      }
+      @keyframes blink-green {
+        0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 5px #22c55e; }
+        50% { opacity: 0.6; transform: scale(0.9); box-shadow: 0 0 2px #22c55e; }
+      }
+    
+/* Thin scrollbars inside panels */
+.custom-scrollbar::-webkit-scrollbar { width: 6px; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+
+/* Panel resize grip */
+.panel-resize { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; touch-action: none;
+  background: linear-gradient(135deg, transparent 50%, #475569 50%, #475569 60%, transparent 60%, transparent 70%, #475569 70%, #475569 80%, transparent 80%); }
+
+/* Unplanned power cut: pulsing ring */
+.powercut-pulse { position: relative; width: 22px; height: 22px; }
+.powercut-pulse::after { content: ''; position: absolute; inset: 0; border-radius: 50%; box-shadow: 0 0 0 0 rgba(239,68,68,0.7); animation: pulse-ring 2s infinite; }
+@keyframes pulse-ring { 0% { box-shadow: 0 0 0 0 rgba(239,68,68,0.6); } 70% { box-shadow: 0 0 0 12px rgba(239,68,68,0); } 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); } }

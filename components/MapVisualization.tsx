@@ -5,6 +5,7 @@ import { InfrastructureAsset, RegionConfig, RiskScenario, OutageEvent, DNORegion
 import { ASSET_TYPES } from '../constants';
 import { InterconnectorFlow, RegionalCarbon, FloodWarning, WeatherWarning } from '../services/liveSystems';
 import { markOk, markFail } from '../services/health';
+import { iconSvg, dotSvg, powerCutSvg, voltageColour } from './icons';
 import { PlusIcon, MinusIcon, ExclamationTriangleIcon } from '@heroicons/react/24/solid';
 
 interface MapProps {
@@ -29,20 +30,15 @@ interface MapProps {
     weatherWarnings?: WeatherWarning[];
 }
 
-const getVoltageColor = (tags: any) => {
-    if (!tags || !tags.voltage) return null;
-    const vStr = String(tags.voltage).replace(/[^0-9]/g, ''); 
-    const v = parseInt(vStr);
-    if (isNaN(v)) return null;
+// Line colour by voltage (see components/icons.ts for the shared legend)
+const getVoltageColor = (tags: any) => voltageColour(tags?.voltage);
 
-    if (v >= 380000 || (v >= 380 && v < 500)) return '#a855f7'; 
-    if (v >= 300000 || (v >= 300 && v < 380)) return '#ec4899'; 
-    if (v >= 270000 || (v >= 270 && v < 300)) return '#1e40af'; 
-    if (v >= 130000 || (v >= 130 && v < 270)) return '#0ea5e9'; 
-    if (v >= 30000 || (v >= 30 && v < 130)) return '#16a34a';   
-    if (v >= 10000 || (v >= 10 && v < 30)) return '#f59e0b';    
-    
-    return '#64748b'; 
+// Dash pattern: underground / subsea cables dashed, gas pipelines dotted
+const lineDash = (asset: InfrastructureAsset): string | undefined => {
+    const t = (asset as any).rawTags || {};
+    if (asset.typeId === 'pipeline_gas' || t.man_made === 'pipeline') return '2 5';
+    if (t.power === 'cable' || t.location === 'underground' || t.location === 'underwater' || asset.typeId === 'interconnector') return '8 5';
+    return undefined;
 };
 
 // Free basemap with no API key: Esri World Dark Gray Canvas (base + labels).
@@ -59,40 +55,25 @@ const iconCache = new Map<string, L.DivIcon>();
 
 // High-contrast asset icons: a dot when zoomed out, a symbol in a black circle when zoomed in.
 const getAssetIcon = (typeDef: AssetType | undefined, color: string, isZoomed: boolean, isAffected: boolean): L.DivIcon => {
-    const finalColor = isAffected ? '#ef4444' : color;
-    const key = `${typeDef?.id}|${finalColor}|${isZoomed && !!typeDef?.icon}|${isAffected}`;
+    const id = typeDef?.id || 'substation';
+    const key = `${id}|${color}|${isZoomed}|${isAffected}`;
     const cached = iconCache.get(key);
     if (cached) return cached;
-
-    let icon: L.DivIcon;
-    if (isZoomed && typeDef?.icon) {
-        const strokeColor = isAffected ? '#ef4444' : '#ffffff';
-        const strokeWidth = isAffected ? 3 : 1.5;
-        const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="32" height="32">
-            <circle cx="12" cy="12" r="11" fill="#000000" stroke="${strokeColor}" stroke-width="${strokeWidth}" />
-            <g transform="translate(3.6, 3.6) scale(0.7)"><path d="${typeDef.icon}" fill="${finalColor}" /></g>
-        </svg>`;
-        icon = L.divIcon({ html: svg, className: 'asset-icon', iconSize: [32, 32], iconAnchor: [16, 16] });
-    } else {
-        const size = isAffected ? 12 : 8;
-        const border = isAffected ? 2 : 1;
-        icon = L.divIcon({
-            html: `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${finalColor};border:${border}px solid #000;box-sizing:content-box"></div>`,
-            className: 'asset-icon',
-            iconSize: [size + border * 2, size + border * 2],
-            iconAnchor: [(size + border * 2) / 2, (size + border * 2) / 2]
-        });
-    }
+    const highlight = isAffected ? '#ef4444' : undefined;
+    const size = isZoomed ? 30 : (isAffected ? 15 : 11);
+    const icon = L.divIcon({
+        html: isZoomed ? iconSvg(id, color, size, highlight) : dotSvg(id, color, size, highlight),
+        className: 'asset-icon',
+        iconSize: [size, size],
+        iconAnchor: [size / 2, size / 2]
+    });
     iconCache.set(key, icon);
     return icon;
 };
 
-const OUTAGE_ICON = L.divIcon({
-    html: '<div class="outage-dot"></div>',
-    className: 'outage-icon',
-    iconSize: [20, 20],
-    iconAnchor: [10, 10]
-});
+// Power cuts: unplanned ones pulse; planned work is shown smaller and dimmer.
+const OUTAGE_ICON = L.divIcon({ html: `<div class="powercut-pulse">${powerCutSvg(22)}</div>`, className: 'asset-icon', iconSize: [22, 22], iconAnchor: [11, 11] });
+const PLANNED_OUTAGE_ICON = L.divIcon({ html: `<div style="opacity:0.7">${powerCutSvg(15)}</div>`, className: 'asset-icon', iconSize: [15, 15], iconAnchor: [8, 8] });
 
 const MapVisualization: React.FC<MapProps> = ({ 
     region, assets, outages, historicalOutages = [], activeScenarios, dnoRegions = [], day, filters, 
@@ -159,6 +140,8 @@ const MapVisualization: React.FC<MapProps> = ({
             preferCanvas: true,
             worldCopyJump: true
         });
+        // Fit Great Britain and Northern Ireland to the screen, whatever its size
+        if (region.id === 'UK') map.fitBounds([[49.9, -8.2], [60.8, 1.8]], { padding: [20, 20] });
         L.tileLayer(BASEMAP_URL, { attribution: BASEMAP_ATTRIBUTION, maxNativeZoom: 16, maxZoom: 19, className: 'basemap-tiles' })
             .on('tileload', () => markOk('basemap'))
             .on('tileerror', () => markFail('basemap', 'tiles failed to load'))
@@ -284,7 +267,7 @@ const MapVisualization: React.FC<MapProps> = ({
                 if (!assetLinesRef.current.has(asset.id)) {
                     const path = asset.path || [{ lat: asset.lat, lng: asset.lng }, { lat: asset.endLat!, lng: asset.endLng! }];
                     const line = L.polyline(path.map(p => [p.lat, p.lng] as [number, number]), {
-                        color, opacity: 0.6, weight: 2
+                        color, opacity: 0.7, weight: 2, dashArray: lineDash(asset)
                     }).addTo(map);
                     line.on('click', () => onAssetSelectRef.current(asset));
                     line.bindTooltip(esc(asset.name), { sticky: true });
@@ -429,8 +412,9 @@ const MapVisualization: React.FC<MapProps> = ({
 
         [...outages, ...(historicalOutages || [])].forEach(outage => {
             if (typeof outage.lat !== 'number' || typeof outage.lng !== 'number' || isNaN(outage.lat) || isNaN(outage.lng)) return;
+            const planned = /^planned/i.test(String(outage.description || ''));
             const marker = L.marker([outage.lat, outage.lng], {
-                icon: OUTAGE_ICON,
+                icon: planned ? PLANNED_OUTAGE_ICON : OUTAGE_ICON,
                 title: `Outage: ${outage.locationName}`,
                 zIndexOffset: 2000
             });
@@ -464,13 +448,13 @@ const MapVisualization: React.FC<MapProps> = ({
         bySite.forEach(list => {
             const unplanned = list.some(g => !g.planned);
             const mw = list.reduce((a, g) => a + g.unavailableMW, 0);
-            const size = Math.max(14, Math.min(34, 10 + Math.sqrt(mw) * 0.9));
+            // A tag showing MW unavailable: amber = unplanned, grey = planned. Larger outages get larger text.
+            const fs = Math.max(9, Math.min(13, 8 + Math.sqrt(mw) / 6));
             const colour = unplanned ? '#f59e0b' : '#64748b';
             const icon = L.divIcon({
-                html: `<div style="width:${size}px;height:${size}px;transform:rotate(45deg);background:${colour};border:2px solid #fff;opacity:0.9;box-shadow:0 0 8px ${colour}"></div>`,
+                html: `<div style="transform:translate(-50%,-50%);display:inline-flex;align-items:center;gap:3px;white-space:nowrap;background:${unplanned ? 'rgba(120,53,15,0.92)' : 'rgba(30,41,59,0.92)'};border:1.5px solid ${colour};color:${unplanned ? '#fde68a' : '#cbd5e1'};font:700 ${fs}px/1.2 system-ui,sans-serif;padding:1px 5px;border-radius:4px;box-shadow:0 1px 4px #000">&#9660;${Math.round(mw)} MW</div>`,
                 className: 'asset-icon',
-                iconSize: [size, size],
-                iconAnchor: [size / 2, size / 2]
+                iconSize: [0, 0]
             });
             const rows = list.map(g => `
                 <div style="border-top:1px solid #334155;padding-top:4px;margin-top:4px">
@@ -568,7 +552,7 @@ const MapVisualization: React.FC<MapProps> = ({
                  </div>
              )}
 
-             <div className="absolute bottom-8 right-8 z-[50] flex flex-col gap-2">
+             <div className="absolute bottom-20 sm:bottom-8 right-3 sm:right-8 z-[50] flex flex-col gap-2">
                  <button onClick={handleZoomIn} className="w-10 h-10 bg-slate-900/90 border border-slate-700 rounded-lg text-white flex items-center justify-center hover:bg-slate-800 shadow-xl transition-all hover:scale-105 active:scale-95"><PlusIcon className="w-6 h-6" /></button>
                  <button onClick={handleZoomOut} className="w-10 h-10 bg-slate-900/90 border border-slate-700 rounded-lg text-white flex items-center justify-center hover:bg-slate-800 shadow-xl transition-all hover:scale-105 active:scale-95"><MinusIcon className="w-6 h-6" /></button>
              </div>

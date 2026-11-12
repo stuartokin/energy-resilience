@@ -6,6 +6,22 @@ export interface ChangeEntry { version: string; date: string; title: string; cha
 
 export const CHANGELOG: ChangeEntry[] = [
     {
+        version: '3.2.0',
+        date: '2026-11-12',
+        title: 'Phase 2: works on any screen, movable and resizable panels, new icons',
+        changes: [
+            'Every panel and the tool dock can be moved (mouse or touch). Panels can be resized from the bottom-right corner and have their own A− / A+ text size and a reset button. Your layout is remembered in this browser; the reset button in View Control restores the defaults.',
+            'A− / A+ in the top bar changes the text size of the whole app.',
+            'Phones and folded foldables: full-screen map with a tab bar (Grid, Outages, Live, Layers, Risks, Analyst); panels open as a bottom sheet. Tablets and unfolded foldables: floating panels at a slightly smaller default size. Help and other windows adapt to small screens.',
+            'New icon set: the outline shape shows the family (circle generation, hexagon storage, square substation, diamond gas network, triangle demand), the symbol shows the type. Small shapes when zoomed out, symbols when zoomed in.',
+            'Lines coloured by voltage (400, 275, 132, 33-66, 11 kV); underground and subsea cables dashed; gas pipelines dotted.',
+            'Power cuts have a new marker (unplanned cuts pulse; planned work is smaller). Generator outages show as tags with the MW unavailable.',
+            'Help → Map legend shows every icon, event marker and line style.',
+            'The status dot turns amber or red when data sources stop answering.',
+            'Styling is now built into the site (faster, no runtime CDN).',
+        ],
+    },
+    {
         version: '3.1.0',
         date: '2026-11-12',
         title: 'Phase 1: real data only, history charts, help and versioning',

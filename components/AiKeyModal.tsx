@@ -23,7 +23,7 @@ const AiKeyModal: React.FC<Props> = ({ onClose }) => {
     const masked = existing ? `${existing.slice(0, 4)}••••••••${existing.slice(-4)}` : '';
 
     return (
-        <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={onClose}>
+        <div className="fixed inset-0 z-[500] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={onClose}>
             <div
                 className="w-full max-w-lg bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden"
                 onClick={e => e.stopPropagation()}

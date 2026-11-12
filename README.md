@@ -20,6 +20,10 @@ A live picture of the GB energy system - infrastructure, power cuts, generator o
 |---|---|
 | `index.html`, `index.tsx`, `App.tsx` | The app (React + TypeScript, built with Vite). `App.tsx` holds the layout, panels and state. |
 | `components/` | Map (`MapVisualization.tsx`), panels, modals, help (`HelpModal.tsx`), live systems panel, AI key box. |
+| `components/DraggablePanel.tsx` | Every floating panel: move (mouse/touch), resize, A−/A+, saved layout; becomes a bottom sheet on phones. |
+| `components/layout.tsx` | Screen modes (desktop / tablet / phone), saved layout, global text size. |
+| `components/icons.ts` | The icon set, line colours by voltage, and the legend definitions. |
+| `index.css`, `tailwind.config.js`, `postcss.config.js` | Styling (Tailwind, built at publish time). |
 | `services/geminiService.ts` | Live data fetching (Elexon, NESO, DNOs, REMIT), the OpenStreetMap snapshot loader, and all AI (Gemini) features. |
 | `services/liveSystems.ts` | Interconnector flows, regional carbon, flood warnings, gas, weather warnings, NESO system notices. |
 | `services/health.ts` | Records whether each data source really answered; drives System Status. |
@@ -174,7 +178,7 @@ Licences and credits: [ATTRIBUTION.md](ATTRIBUTION.md).
 ## Roadmap
 
 1. ~~Phase 1 - real data only, working history charts, help and versioning~~ (v3.1.0)
-2. Phase 2 - every panel movable, resizable and text-size adjustable; layouts for large screens, laptops, tablets, foldables and phones; a consistent icon set
+2. ~~Phase 2 - movable, resizable, text-size adjustable panels; layouts for every screen; new icon set~~ (v3.2.0)
 3. Phase 3 - MapLibre map with weekly-built tiles of every energy asset in GB (solar, batteries, wind, substations, lines, cables, pipes) and how they connect (DNO Embedded Capacity Registers)
 4. Phase 4 - a curated library of realistic risk scenarios in every category, with a transparent, sourced impact model
 5. Phase 5 - weekly research agents that propose new scenarios and sources for review

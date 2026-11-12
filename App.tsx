@@ -25,6 +25,7 @@ import HelpModal from './components/HelpModal';
 import ReportModal from './components/ReportModal';
 import SupplyChainModal from './components/SupplyChainModal';
 import DraggablePanel from './components/DraggablePanel';
+import { useLayout, clearSavedLayout, applyFontSize, getFontSize, FONT_SIZES } from './components/layout';
 import GenerationListPanel from './components/GenerationListPanel';
 import GridHistoryModal from './components/GridHistoryModal';
 import AiKeyModal from './components/AiKeyModal';
@@ -144,6 +145,14 @@ const PinnedItem = ({ id, onUnpin }: { id: string, onUnpin: (id: string, x?: num
 };
 
 export const App: React.FC = () => {
+    const { mode: layoutMode, activeSheet, setActiveSheet } = useLayout();
+    const [fontPx, setFontPx] = useState<number>(getFontSize());
+    const changeFont = (dir: 1 | -1) => {
+        const i = FONT_SIZES.indexOf(fontPx);
+        const next = FONT_SIZES[Math.min(FONT_SIZES.length - 1, Math.max(0, (i < 0 ? 3 : i) + dir))];
+        setFontPx(next);
+        applyFontSize(next);
+    };
     // --- STATE ---
     const [activeRegion, setActiveRegion] = useState<RegionConfig>(REGIONS[0]); // Default UK
     const [assets, setAssets] = useState<InfrastructureAsset[]>(UK_ASSETS_SEED);
@@ -292,8 +301,10 @@ export const App: React.FC = () => {
     const getSystemHealthColor = () => {
         if (!navigator.onLine) return 'red';
         const statuses = getApiSystemStatus();
-        const hasDegraded = statuses.some(s => s.status === 'Degraded' || s.status === 'Quota Limit');
-        const hasDown = statuses.some(s => s.status === 'Down');
+        const checked = statuses.filter(s => s.status === 'Operational' || s.status === 'Unavailable');
+        const down = checked.filter(s => s.status === 'Unavailable').length;
+        const hasDegraded = down > 0 || statuses.some(s => s.status === 'Degraded');
+        const hasDown = checked.length > 0 && down >= Math.ceil(checked.length / 2);
         
         if (hasDown) return 'red';
         if (hasDegraded) return 'amber';
@@ -305,7 +316,7 @@ export const App: React.FC = () => {
     
     useEffect(() => {
         setSystemHealth(getSystemHealthColor());
-    }, [liveOutages, assets, lastOutageCheck]); // Dependencies to trigger update
+    }, [liveOutages, assets, lastOutageCheck, liveSystemsUpdated, nesoData]); // re-check when any feed updates
 
     // --- LOGIC: Asset Live Status ---
     const calculateAssetStatus = (mix: GenerationMix, currentAssets: InfrastructureAsset[]): InfrastructureAsset[] => {
@@ -768,7 +779,8 @@ export const App: React.FC = () => {
         setMapCenterOverride({ lat: activeRegion.lat, lng: activeRegion.lng, zoom: activeRegion.zoom });
         setMinimizedPanels(new Set(INITIAL_MINIMIZED));
         
-        // Reset Layout to Defaults
+        // Reset Layout to Defaults (including sizes and zoom saved in this browser)
+        clearSavedLayout();
         setLayoutKey(prev => prev + 1);
         setPanelPositions({});
         setPinnedPanels(new Set([]));
@@ -1159,7 +1171,7 @@ export const App: React.FC = () => {
                             <h3 className="font-bold text-sm">Getting started</h3>
                             <p className="text-xs text-amber-200/80 mt-1">
                                 National infrastructure and live grid data load automatically. 
-                                Zoom into an area to load local substations and lines, and use the <span className="font-bold text-white">filter</span> button to choose layers.
+                                Zoom into an area to load local substations and lines, and use {layoutMode === 'phone' ? <>the <span className="font-bold text-white">Layers</span> tab</> : <>the <span className="font-bold text-white">filter</span> button</>} to choose layers.
                             </p>
                         </div>
                     </div>
@@ -1258,7 +1270,7 @@ export const App: React.FC = () => {
 
             {/* Report Generation Progress Modal */}
             {isGeneratingReport && (
-                <div className="fixed inset-0 z-[300] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
+                <div className="fixed inset-0 z-[500] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
                     <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-md w-full p-8 shadow-2xl flex flex-col items-center">
                         <div className="w-16 h-16 bg-cyan-900/30 rounded-full flex items-center justify-center mb-6 relative">
                             <DocumentTextIcon className="w-8 h-8 text-cyan-400 absolute" />
@@ -1332,6 +1344,10 @@ export const App: React.FC = () => {
                             <ArrowDownTrayIcon className="w-5 h-5" />
                         </button>
                         
+                        <div className="hidden sm:flex items-center border border-slate-800 rounded overflow-hidden text-xs font-bold text-slate-400" title="Text size for the whole app">
+                            <button onClick={() => changeFont(-1)} className="px-2 py-1 hover:bg-slate-800 hover:text-white" aria-label="Smaller text">A−</button>
+                            <button onClick={() => changeFont(1)} className="px-2 py-1 hover:bg-slate-800 hover:text-white border-l border-slate-800" aria-label="Larger text">A+</button>
+                        </div>
                         <button
                             onClick={() => setShowAiKey(true)}
                             className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded border text-xs font-bold transition-colors ${
@@ -1378,7 +1394,7 @@ export const App: React.FC = () => {
                     {/* Standalone Map Home Button */}
                     <button 
                         onClick={handleHomeView} 
-                        className="absolute bottom-24 left-8 z-10 bg-slate-900 border border-slate-700 p-3 rounded-full shadow-xl hover:bg-slate-800 text-slate-400 hover:text-white transition-all hover:scale-110 active:scale-95 group"
+                        className="absolute bottom-20 sm:bottom-24 left-3 sm:left-8 z-10 bg-slate-900 border border-slate-700 p-3 rounded-full shadow-xl hover:bg-slate-800 text-slate-400 hover:text-white transition-all hover:scale-110 active:scale-95 group"
                         title="Reset Map View"
                     >
                         <MapIcon className="w-6 h-6 group-hover:text-cyan-400" />
@@ -1394,7 +1410,7 @@ export const App: React.FC = () => {
 
                     {/* Filter Panel (Left - Independent) */}
                     {!minimizedPanels.has('infra') && !pinnedPanels.has('infra') && (
-                        <DraggablePanel 
+                        <DraggablePanel id="infra" title={PANEL_CONFIG['infra']?.title}
                             key={`infra_${layoutKey}`} 
                             initialX={panelPositions['infra']?.x ?? 16} 
                             initialY={panelPositions['infra']?.y ?? 600} 
@@ -1471,7 +1487,7 @@ export const App: React.FC = () => {
                                             className={`w-full flex items-center gap-2 px-2 py-1 rounded text-[10px] font-bold transition-all ${visibleLayers.has('Generator Outages') ? 'bg-slate-800 text-white' : 'text-slate-500 opacity-50'}`}
                                             title="Live power station and interconnector outages (Elexon REMIT). Amber = unplanned."
                                         >
-                                            <div className="w-2 h-2 rotate-45 bg-amber-500"></div>
+                                            <span className="text-[8px] px-1 rounded border border-amber-500 bg-amber-900 text-amber-200 leading-tight">MW</span>
                                             Generator Outages
                                         </button>
 
@@ -1512,7 +1528,7 @@ export const App: React.FC = () => {
 
                     {/* Data Sync Panel */}
                     {!minimizedPanels.has('data_sync') && !pinnedPanels.has('data_sync') && (
-                        <DraggablePanel 
+                        <DraggablePanel id="data_sync" title={PANEL_CONFIG['data_sync']?.title}
                             key={`data_sync_${layoutKey}`} 
                             initialX={panelPositions['data_sync']?.x ?? 16} 
                             initialY={panelPositions['data_sync']?.y ?? 430} 
@@ -1571,7 +1587,7 @@ export const App: React.FC = () => {
 
                     {/* Scenarios Panel */}
                     {!minimizedPanels.has('scenarios_pane') && !pinnedPanels.has('scenarios_pane') && (
-                        <DraggablePanel 
+                        <DraggablePanel id="scenarios_pane" title={PANEL_CONFIG['scenarios_pane']?.title}
                             key={`scenarios_pane_${layoutKey}`} 
                             initialX={panelPositions['scenarios_pane']?.x ?? 16} 
                             initialY={panelPositions['scenarios_pane']?.y ?? 760} 
@@ -1608,7 +1624,7 @@ export const App: React.FC = () => {
 
                     {/* Reset View Panel */}
                     {!minimizedPanels.has('reset_view') && !pinnedPanels.has('reset_view') && (
-                        <DraggablePanel 
+                        <DraggablePanel id="reset_view" title={PANEL_CONFIG['reset_view']?.title}
                             key={`reset_view_${layoutKey}`} 
                             initialX={panelPositions['reset_view']?.x ?? 16} 
                             initialY={panelPositions['reset_view']?.y ?? (window.innerHeight - 140)} 
@@ -1638,7 +1654,7 @@ export const App: React.FC = () => {
 
                     {/* 2. System Status Card (Regional Network) (Moved to Top Left) */}
                     {!minimizedPanels.has('system_monitor') && !pinnedPanels.has('system_monitor') && (
-                        <DraggablePanel 
+                        <DraggablePanel id="system_monitor" title={PANEL_CONFIG['system_monitor']?.title}
                             key={`system_monitor_${layoutKey}`} 
                             initialX={panelPositions['system_monitor']?.x ?? 16} 
                             initialY={panelPositions['system_monitor']?.y ?? 70} 
@@ -1665,7 +1681,7 @@ export const App: React.FC = () => {
                                         <span className="block text-slate-500 font-bold uppercase flex items-center gap-1">
                                             Grid Demand <ChartBarIcon className="w-3 h-3" />
                                         </span>
-                                        <span className="text-white font-mono text-base">{(nesoData.demand / 1000).toFixed(2)} GW{nesoData.estimated && <span className="text-[9px] text-amber-400 ml-1" title="Live feed unavailable - estimated">est.</span>}</span>
+                                        <span className="text-white font-mono text-base">{nesoData.demand > 0 ? `${(nesoData.demand / 1000).toFixed(2)} GW` : '–'}{nesoData.estimated && nesoData.demand > 0 && <span className="text-[9px] text-amber-400 ml-1" title="Live feed unavailable - last known value">est.</span>}</span>
                                     </div>
                                     <div 
                                         className="p-1 rounded cursor-pointer hover:bg-slate-800 transition-colors"
@@ -1676,7 +1692,7 @@ export const App: React.FC = () => {
                                             Frequency <ChartBarIcon className="w-3 h-3" />
                                         </span>
                                         <span className={`font-mono text-base ${nesoData.frequency < 49.8 || nesoData.frequency > 50.2 ? 'text-red-400' : 'text-green-400'}`}>
-                                            {nesoData.frequency.toFixed(3)} Hz{nesoData.estimated && <span className="text-[9px] text-amber-400 ml-1" title="Live feed unavailable - last known value">est.</span>}
+                                            {nesoData.estimated && nesoData.demand === 0 ? '–' : `${nesoData.frequency.toFixed(3)} Hz`}{nesoData.estimated && nesoData.demand > 0 && <span className="text-[9px] text-amber-400 ml-1" title="Live feed unavailable - last known value">est.</span>}
                                         </span>
                                     </div>
                                     {generationMix && (
@@ -1698,7 +1714,7 @@ export const App: React.FC = () => {
 
                     {/* Grid Status Panel / Live Outages (Moved Underneath System Monitor) */}
                     {!isGrowthMode && !minimizedPanels.has('grid_status') && !pinnedPanels.has('grid_status') && (
-                        <DraggablePanel 
+                        <DraggablePanel id="grid_status" title={PANEL_CONFIG['grid_status']?.title}
                             key={`grid_status_${layoutKey}`} 
                             initialX={panelPositions['grid_status']?.x ?? 16} 
                             initialY={panelPositions['grid_status']?.y ?? 280} 
@@ -1735,7 +1751,7 @@ export const App: React.FC = () => {
 
                     {/* Live Systems Panel (Right) */}
                     {!minimizedPanels.has('live_systems') && !pinnedPanels.has('live_systems') && (
-                        <DraggablePanel
+                        <DraggablePanel id="live_systems" title={PANEL_CONFIG['live_systems']?.title}
                             key={`live_systems_${layoutKey}`}
                             initialX={panelPositions['live_systems']?.x ?? (window.innerWidth - 300)}
                             initialY={panelPositions['live_systems']?.y ?? 80}
@@ -1756,7 +1772,7 @@ export const App: React.FC = () => {
 
                     {/* Engineering Work Panel (Right - Independent) */}
                     {!minimizedPanels.has('engineering_work') && !pinnedPanels.has('engineering_work') && maintenanceAssets.length > 0 && (
-                        <DraggablePanel 
+                        <DraggablePanel id="engineering_work" title={PANEL_CONFIG['engineering_work']?.title}
                             key={`engineering_work_${layoutKey}`} 
                             initialX={panelPositions['engineering_work']?.x ?? (window.innerWidth - 380)} 
                             initialY={panelPositions['engineering_work']?.y ?? (activeScenarios.length > 0 ? 730 : 400)} 
@@ -1787,7 +1803,7 @@ export const App: React.FC = () => {
                     
                     {/* NEW: Supply Chain Panel */}
                     {!minimizedPanels.has('supply_chain') && !pinnedPanels.has('supply_chain') && (
-                        <DraggablePanel 
+                        <DraggablePanel id="supply_chain" title={PANEL_CONFIG['supply_chain']?.title}
                             key={`supply_chain_${layoutKey}`} 
                             initialX={panelPositions['supply_chain']?.x ?? (window.innerWidth - 300)} 
                             initialY={panelPositions['supply_chain']?.y ?? 700} 
@@ -1818,7 +1834,7 @@ export const App: React.FC = () => {
                     
                     {/* NEW: Reporting Panel */}
                     {!minimizedPanels.has('reporting') && !pinnedPanels.has('reporting') && (
-                        <DraggablePanel 
+                        <DraggablePanel id="reporting" title={PANEL_CONFIG['reporting']?.title}
                             key={`reporting_${layoutKey}`} 
                             initialX={panelPositions['reporting']?.x ?? (window.innerWidth - 300)} 
                             initialY={panelPositions['reporting']?.y ?? 250} 
@@ -1863,7 +1879,7 @@ export const App: React.FC = () => {
                     
                     {/* 1. Scenario Active Stats Panel (Only visible when running) */}
                     {activeScenarios.length > 0 && !minimizedPanels.has('scenario_stats') && !pinnedPanels.has('scenario_stats') && (
-                        <DraggablePanel 
+                        <DraggablePanel id="scenario_stats" title={PANEL_CONFIG['scenario_stats']?.title}
                             key={`scenario_stats_${layoutKey}`} 
                             initialX={panelPositions['scenario_stats']?.x ?? (window.innerWidth - 480)} 
                             initialY={panelPositions['scenario_stats']?.y ?? 16} 
@@ -1946,7 +1962,7 @@ export const App: React.FC = () => {
 
                     {/* NEW: Standby Capacity Panel (Independent) */}
                     {!minimizedPanels.has('standby_list') && !pinnedPanels.has('standby_list') && (
-                        <DraggablePanel 
+                        <DraggablePanel id="standby_list" title={PANEL_CONFIG['standby_list']?.title}
                             key={`standby_list_${layoutKey}`} 
                             initialX={panelPositions['standby_list']?.x ?? (window.innerWidth - 300)} 
                             initialY={panelPositions['standby_list']?.y ?? 560} 
@@ -1984,7 +2000,7 @@ export const App: React.FC = () => {
 
                     {/* 3. Chat Panel (Independent & Movable) */}
                     {showChat && !minimizedPanels.has('chat') && !pinnedPanels.has('chat') && (
-                        <DraggablePanel 
+                        <DraggablePanel id="chat" title={PANEL_CONFIG['chat']?.title}
                             key={`chat_${layoutKey}`} 
                             initialX={panelPositions['chat']?.x ?? (window.innerWidth - 420)} 
                             initialY={panelPositions['chat']?.y ?? (window.innerHeight - 600)} 
@@ -2023,7 +2039,7 @@ export const App: React.FC = () => {
 
                     {/* Generation List Modal - Draggable */}
                     {showGenList && (
-                        <DraggablePanel 
+                        <DraggablePanel id="gen_list" title="Generation"
                             key={'gen_list_' + layoutKey} 
                             initialX={window.innerWidth - 750} 
                             initialY={200} 
@@ -2041,8 +2057,9 @@ export const App: React.FC = () => {
                     )}
 
                     {/* Dock for Minimized Panels - REORGANIZED to grid 5 cols */}
-                    {(minimizedPanels.size > 0 || (showChat && minimizedPanels.has('chat'))) && (
-                        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[400] bg-slate-900/80 backdrop-blur border border-slate-700 p-2 rounded-xl animate-slideUp grid grid-cols-5 gap-2 shadow-2xl">
+                    {layoutMode !== 'phone' && (minimizedPanels.size > 0 || (showChat && minimizedPanels.has('chat'))) && (
+                        <DraggablePanel id="dock" title="Tools" key={`dock_${layoutKey}`} initialX={Math.round(window.innerWidth / 2 - 130)} initialY={window.innerHeight - 200} zIndex={400} resizable={false}>
+                        <div className="bg-slate-900/80 backdrop-blur border border-slate-700 p-2 rounded-xl animate-slideUp grid grid-cols-5 gap-2 shadow-2xl" title="Drag the dock to move it">
                             {/* Infrastructure */}
                             {minimizedPanels.has('infra') && (
                                 <button onClick={() => restorePanel('infra')} className="p-2 hover:bg-slate-800 rounded text-slate-400 hover:text-white" title="Infrastructure Filter">
@@ -2113,10 +2130,41 @@ export const App: React.FC = () => {
                                 </button>
                             )}
                         </div>
+                        </DraggablePanel>
                     )}
                     
                 </main>
                 
+                {/* Phone: tab bar that opens panels as a bottom sheet */}
+                {layoutMode === 'phone' && (
+                    <nav className="fixed inset-x-0 bottom-0 z-[460] h-14 bg-slate-950/95 backdrop-blur border-t border-slate-800 flex justify-around items-stretch" aria-label="Panels">
+                        {[
+                            ['system_monitor', 'Grid', ShieldCheckIcon],
+                            ['grid_status', 'Outages', ExclamationTriangleIcon],
+                            ['live_systems', 'Live', SignalIcon],
+                            ['infra', 'Layers', FunnelIcon],
+                            ['scenarios_pane', 'Risks', PlayIcon],
+                            ['chat', 'Analyst', ChatBubbleLeftRightIcon],
+                        ].map(([pid, label, Icon]: any) => (
+                            <button
+                                key={pid}
+                                onClick={() => {
+                                    if (activeSheet === pid) { setActiveSheet(null); return; }
+                                    if (minimizedPanels.has(pid)) restorePanel(pid);
+                                    if (pinnedPanels.has(pid)) unpinPanel(pid);
+                                    if (pid === 'chat') setShowChat(true);
+                                    setActiveSheet(pid);
+                                }}
+                                className={`flex-1 flex flex-col items-center justify-center gap-0.5 text-[10px] font-bold ${activeSheet === pid ? 'text-cyan-400 bg-slate-900' : 'text-slate-400'}`}
+                                aria-pressed={activeSheet === pid}
+                            >
+                                <Icon className="w-5 h-5" />
+                                {label}
+                            </button>
+                        ))}
+                    </nav>
+                )}
+
                 {/* Modals and Overlays */}
                 {historyModalMetric && (
                     <GridHistoryModal 
@@ -2194,7 +2242,7 @@ export const App: React.FC = () => {
             )}
 
             {isLoading && (
-                <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm animate-fadeIn">
+                <div className="fixed inset-0 z-[500] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm animate-fadeIn">
                     <div className="max-w-md w-full text-center">
                         <h2 className="text-xl font-bold text-white mb-2">{loadingMessage}</h2>
                         <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden mb-4">

@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { XMarkIcon, SparklesIcon, BookOpenIcon, ServerStackIcon, CircleStackIcon, ChatBubbleBottomCenterTextIcon, CheckCircleIcon, ExclamationTriangleIcon, XCircleIcon, PlayIcon, ChatBubbleLeftRightIcon, ClipboardDocumentListIcon } from '@heroicons/react/24/solid';
 import { APP_VERSION, BUILD_DATE, BUILD_COMMIT, ASSET_TYPES } from '../constants';
 import { CHANGELOG } from '../content/changelog';
+import { iconSvg, powerCutSvg, LINE_LEGEND } from './icons';
 import { DATA_SOURCES } from '../content/sources';
 import { getApiSystemStatus, getSystemLogs } from '../services/geminiService';
 
@@ -20,19 +21,19 @@ const HelpModal: React.FC<HelpModalProps> = ({ onClose, onLaunchTour, initialTab
     const tabs = [
         { id: 'guide', label: 'User Guide', icon: BookOpenIcon },
         { id: 'whatsnew', label: "What's new", icon: SparklesIcon },
-        { id: 'assets', label: 'Asset Legend', icon: CircleStackIcon },
+        { id: 'assets', label: 'Map legend', icon: CircleStackIcon },
         { id: 'sources', label: 'About & sources', icon: ChatBubbleBottomCenterTextIcon },
         { id: 'status', label: 'System Status', icon: ServerStackIcon },
         { id: 'logs', label: 'System Logs', icon: ClipboardDocumentListIcon },
     ];
 
     return (
-        <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur flex items-center justify-center p-4 md:p-8" onClick={onClose}>
-            <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-5xl w-full h-[80vh] shadow-2xl relative flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-[500] bg-black/80 backdrop-blur flex items-center justify-center p-0 sm:p-4 md:p-8" onClick={onClose}>
+            <div className="bg-slate-900 border border-slate-700 sm:rounded-xl max-w-5xl w-full h-full sm:h-[85vh] shadow-2xl relative flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
                 
                 {/* Header */}
-                <div className="flex justify-between items-center p-6 border-b border-slate-800 bg-slate-950">
-                    <h2 className="text-2xl font-bold text-white flex items-center gap-3">
+                <div className="flex justify-between items-center px-4 py-3 sm:p-6 border-b border-slate-800 bg-slate-950">
+                    <h2 className="text-lg sm:text-2xl font-bold text-white flex items-center gap-3">
                         <span className="text-cyan-400">///</span> Resilience Platform Help
                     </h2>
                     <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors">
@@ -40,14 +41,14 @@ const HelpModal: React.FC<HelpModalProps> = ({ onClose, onLaunchTour, initialTab
                     </button>
                 </div>
 
-                <div className="flex flex-1 overflow-hidden">
+                <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
                     {/* Sidebar */}
-                    <div className="w-64 bg-slate-950/50 border-r border-slate-800 flex flex-col p-4 gap-2">
+                    <div className="md:w-64 shrink-0 bg-slate-950/50 border-b md:border-b-0 md:border-r border-slate-800 flex md:flex-col p-2 md:p-4 gap-1 md:gap-2 overflow-x-auto">
                         {tabs.map(tab => (
                             <button
                                 key={tab.id}
                                 onClick={() => setActiveTab(tab.id as any)}
-                                className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                                className={`flex items-center gap-2 md:gap-3 px-3 md:px-4 py-2 md:py-3 rounded-lg text-xs md:text-sm font-bold whitespace-nowrap shrink-0 transition-all ${
                                     activeTab === tab.id 
                                     ? 'bg-cyan-900/30 text-cyan-400 border border-cyan-500/30 shadow-lg' 
                                     : 'text-slate-400 hover:bg-slate-800 hover:text-white'
@@ -58,7 +59,7 @@ const HelpModal: React.FC<HelpModalProps> = ({ onClose, onLaunchTour, initialTab
                             </button>
                         ))}
                         
-                        <div className="mt-auto space-y-2">
+                        <div className="mt-auto space-y-2 hidden md:block">
                              <div className="p-4 bg-slate-800/50 rounded border border-slate-700/50">
                                 <h3 className="text-xs font-bold text-slate-400 uppercase mb-2 flex items-center gap-2">
                                     <ChatBubbleLeftRightIcon className="w-3 h-3" /> Support
@@ -84,7 +85,7 @@ const HelpModal: React.FC<HelpModalProps> = ({ onClose, onLaunchTour, initialTab
                     </div>
 
                     {/* Content Area */}
-                    <div className="flex-1 overflow-y-auto p-8 bg-slate-900/50 custom-scrollbar">
+                    <div className="flex-1 overflow-y-auto p-4 md:p-8 bg-slate-900/50 custom-scrollbar">
                         
                         {activeTab === 'guide' && (
                             <div className="space-y-6 animate-fadeIn">
@@ -140,21 +141,38 @@ const HelpModal: React.FC<HelpModalProps> = ({ onClose, onLaunchTour, initialTab
                         )}
 
                         {activeTab === 'assets' && (
-                            <div className="animate-fadeIn">
-                                <h3 className="text-xl font-bold text-white mb-6 border-b border-slate-700 pb-2">Infrastructure Asset Legend</h3>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    {ASSET_TYPES.map(asset => (
-                                        <div key={asset.id} className="flex items-center gap-4 bg-slate-800/30 p-3 rounded border border-slate-700/50">
-                                            <div 
-                                                className="w-8 h-8 rounded-full border-2 border-white/20 shadow-lg shrink-0"
-                                                style={{ backgroundColor: asset.color }}
-                                            />
-                                            <div>
-                                                <div className="font-bold text-slate-200">{asset.label}</div>
-                                                <div className="text-xs text-slate-500 uppercase tracking-wider">{asset.category}</div>
-                                            </div>
+                            <div className="animate-fadeIn space-y-6">
+                                <div>
+                                    <h3 className="text-xl font-bold text-white mb-2 border-b border-slate-700 pb-2">Map legend</h3>
+                                    <p className="text-sm text-slate-400">The outline shape shows the family: <b className="text-slate-200">circle</b> = generation, <b className="text-slate-200">hexagon</b> = storage, <b className="text-slate-200">square</b> = substation / network, <b className="text-slate-200">diamond</b> = gas network, <b className="text-slate-200">triangle</b> = demand. Zoomed out, assets show as small coloured shapes; zoom in to see the symbols. A red ring means the asset is affected by the running scenario.</p>
+                                </div>
+                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                                    {ASSET_TYPES.filter(a => !['transmission_elec', 'distribution_elec', 'pipeline_gas', 'custom_search'].includes(a.id)).map(asset => (
+                                        <div key={asset.id} className="flex items-center gap-3 bg-slate-800/30 p-2 rounded border border-slate-700/50">
+                                            <span className="shrink-0" dangerouslySetInnerHTML={{ __html: iconSvg(asset.id, asset.color, 32) }} />
+                                            <span className="text-xs text-slate-200 font-bold">{asset.label}</span>
                                         </div>
                                     ))}
+                                </div>
+                                <div>
+                                    <h4 className="font-bold text-slate-200 mb-2">Live events</h4>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-slate-300">
+                                        <div className="flex items-center gap-3"><span dangerouslySetInnerHTML={{ __html: powerCutSvg(24) }} /> Power cut (unplanned ones pulse; planned work is smaller)</div>
+                                        <div className="flex items-center gap-3"><span className="px-1.5 rounded border border-amber-500 bg-amber-900 text-amber-200 font-bold">&#9660;812 MW</span> Generator / interconnector outage (amber = unplanned, grey = planned)</div>
+                                        <div className="flex items-center gap-3"><span className="px-1.5 rounded border border-green-400 text-green-400 font-bold">IFA &darr;331 MW</span> Interconnector flow (green = import, orange = export)</div>
+                                        <div className="flex items-center gap-3"><span className="w-4 h-4 bg-blue-600 border-2 border-white rounded-sm inline-block" /> Flood warning (red = severe)</div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <h4 className="font-bold text-slate-200 mb-2">Lines and pipes</h4>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                        {LINE_LEGEND.map(l => (
+                                            <div key={l.label} className="flex items-center gap-3 text-xs text-slate-300">
+                                                <svg width="56" height="10"><line x1="2" y1="5" x2="54" y2="5" stroke={l.colour} strokeWidth={l.width} strokeDasharray={l.dash || undefined} strokeLinecap="round" /></svg>
+                                                {l.label}
+                                            </div>
+                                        ))}
+                                    </div>
                                 </div>
                             </div>
                         )}

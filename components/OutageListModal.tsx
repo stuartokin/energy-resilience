@@ -23,7 +23,7 @@ const OutageListModal: React.FC<OutageListModalProps> = ({ outages, onClose, onR
     const hasSimulatedData = outages.some(o => o.isSimulated);
 
     return (
-        <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn" onClick={onClose}>
+        <div className="fixed inset-0 z-[500] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn" onClick={onClose}>
             <div 
                 className="w-full max-w-5xl bg-slate-900 border border-slate-700 rounded-xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden relative" 
                 onClick={e => e.stopPropagation()}

@@ -44,7 +44,7 @@ const GridHistoryModal: React.FC<GridHistoryModalProps> = ({ metric, onClose }) 
     const color = metric === 'demand' ? '#eab308' : '#22c55e'; // Yellow for Demand, Green for Freq
 
     return (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn" onClick={onClose}>
+        <div className="fixed inset-0 z-[500] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn" onClick={onClose}>
             <div 
                 className="w-full max-w-4xl bg-slate-900 border border-slate-700 rounded-xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden" 
                 onClick={e => e.stopPropagation()}

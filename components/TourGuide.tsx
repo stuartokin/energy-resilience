@@ -41,7 +41,7 @@ const TourGuide: React.FC<TourGuideProps> = ({ onClose, onStepChange }) => {
     const content = TOUR_SCRIPTS[stepData.key] || TOUR_SCRIPTS['intro'];
 
     return (
-        <div className="fixed inset-0 z-[300] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[500] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
             <div className="bg-slate-900 border border-cyan-500/50 rounded-xl shadow-2xl max-w-lg w-full p-6 relative animate-fadeIn">
                 <button onClick={onClose} className="absolute top-4 right-4 text-slate-500 hover:text-white">
                     <XMarkIcon className="w-6 h-6" />

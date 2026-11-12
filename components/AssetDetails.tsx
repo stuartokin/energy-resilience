@@ -45,7 +45,7 @@ const AssetDetails: React.FC<AssetDetailsProps> = ({ asset, regionName, onClose 
     const criticality = voltage && voltage >= 275000 ? "Critical Transmission" : (asset.capacityMW && asset.capacityMW > 500 ? "Critical Generation" : "Standard Asset");
 
     return (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fadeIn" onClick={onClose}>
+        <div className="fixed inset-0 z-[500] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fadeIn" onClick={onClose}>
             <div 
                 className="w-full max-w-2xl bg-slate-900 border border-slate-700 rounded-xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden relative" 
                 onClick={e => e.stopPropagation()}
