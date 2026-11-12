@@ -37,7 +37,7 @@ A live picture of the GB energy system - infrastructure, power cuts, generator o
 | `scripts/build-osm-snapshot.mjs` | Run by GitHub Actions on each publish and weekly. Builds `data/osm-uk.json` (OpenStreetMap infrastructure) and calls the two scripts below. |
 | `scripts/build-dno-areas.mjs`, `scripts/dno-geometry.mjs` | Download NESO's DNO boundaries, convert from British National Grid, simplify → `data/dno-areas.json`. |
 | `scripts/build-bmu-locations.mjs` | Power station unit locations → `data/bmu-locations.json` (places REMIT outages on the map). |
-| `scripts/build-connections.mjs` | Which generators and batteries connect to which substation → `data/connections.json` (NESO TEC/Embedded Registers + DNO Embedded Capacity Registers). |
+| `scripts/build-connections.mjs` | Which generators and batteries connect to which substation → `data/connections.json` (NESO TEC/Embedded Registers + DNO Embedded Capacity Registers), plus the government planning database (REPD) for areas no register covers. Where no connection is published, the map infers the likely substation from OpenStreetMap and labels it as inferred. |
 | `services/connections.ts` | Reads `connections.json` and matches register entries to map substations by name. |
 | `content/scenarios.ts` | **The scenario library.** Each scenario has a model, the reasoning for its numbers and its sources. Copy one to add a new scenario. |
 | `content/assumptions.ts` | **Every value the impact model uses**, with source or reasoning, plus reference events. Shown in Help → Scenario model. |
@@ -210,6 +210,7 @@ Needs [Node.js](https://nodejs.org) 20+. Run `npm install`, then `npm run dev`, 
 | [OpenStreetMap](https://www.openstreetmap.org/copyright) | Infrastructure, place search | Weekly + on zoom | Build / direct |
 | [OSUKED Power Station Dictionary](https://github.com/OSUKED/Power-Station-Dictionary) | Power station unit locations | Each publish | Build |
 | [NESO TEC / Embedded Register](https://www.neso.energy/data-portal/transmission-entry-capacity-tec-register) | Transmission connection site of large generators and batteries | Each publish | Build |
+| [DESNZ Renewable Energy Planning Database](https://www.gov.uk/government/publications/renewable-energy-planning-database-quarterly-extract) | Renewable and storage sites (1 MW+) where no network register covers them | Each publish | Build |
 | DNO Embedded Capacity Registers: [NPg](https://northernpowergrid.opendatasoft.com/explore/dataset/embedded-capacity-register/), [SPEN](https://spenergynetworks.opendatasoft.com/explore/dataset/embedded-capacity-register/) (key), [UKPN](https://ukpowernetworks.opendatasoft.com/explore/dataset/ukpn-embedded-capacity-register/) (key) | Generators/batteries ≥1 MW and their Primary, BSP and GSP | Each publish | Build |
 | [Esri World Dark Gray Canvas](https://www.arcgis.com/home/item.html?id=358ec1e175ea41c3bf5c68f0da11ae2b) | Map background | Live | Direct |
 | [RainViewer](https://www.rainviewer.com/api.html) | Weather radar | Live | Direct |

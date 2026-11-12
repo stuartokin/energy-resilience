@@ -166,6 +166,7 @@ const HelpModal: React.FC<HelpModalProps> = ({ onClose, onLaunchTour, initialTab
                                         <div className="flex items-center gap-3"><span className="px-1.5 rounded border border-green-400 text-green-400 font-bold">IFA &darr;331 MW</span> Interconnector flow (green = import, orange = export)</div>
                                         <div className="flex items-center gap-3"><span className="w-4 h-4 bg-blue-600 border-2 border-white rounded-sm inline-block" /> Flood warning (red = severe)</div>
                                         <div className="flex items-center gap-3"><span className="flex gap-1"><span className="w-3 h-3 rounded-full inline-block bg-yellow-400" /><span className="w-3 h-3 rounded-full inline-block border-2 border-lime-400" /></span> Generator / battery from a DNO capacity register (filled = connected, ring = accepted, not built; size = MW). Click for the substations it connects through</div>
+                                        <div className="flex items-center gap-3"><span className="w-3 h-3 rounded-full inline-block bg-yellow-400/60 border border-slate-200" /> Renewable or storage site from the government's planning database (REPD), where no network register covers it. Click to see the substation it <i>probably</i> connects to, inferred from OpenStreetMap (labelled, may be wrong)</div>
                                     </div>
                                 </div>
                                 <div>

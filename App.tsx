@@ -1738,6 +1738,7 @@ export const App: React.FC = () => {
                                     <p className="text-[9px] text-slate-400 font-mono text-right">
                                         Last Updated: {lastOutageCheck.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                                     </p>
+                                    <p className="text-[9px] text-amber-300/80 mt-1 leading-tight">No open live feed for North West England (ENWL). <a href="https://www.enwl.co.uk" target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="underline hover:text-white">enwl.co.uk</a> · call 105</p>
                                 </div>
                             </div>
                         </DraggablePanel>

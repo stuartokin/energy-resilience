@@ -15,7 +15,7 @@ import { InterconnectorFlow, RegionalCarbon, FloodWarning, WeatherWarning } from
 import { markOk, markFail } from '../services/health';
 import { iconSvg, dotSvg, powerCutSvg, voltageColour, ASSET_ICON } from './icons';
 import { FlowLink, fmtGW, fmtNative } from '../services/flows';
-import { loadConnections, connectionsAt, tecForStation, normaliseSubName, sameAsSite, ConnectionsData, FUEL_LABEL, FUEL_COLOUR, ECR_SOURCE_LABEL } from '../services/connections';
+import { loadConnections, connectionsAt, tecForStation, normaliseSubName, sameAsSite, ConnectionsData, FUEL_LABEL, FUEL_COLOUR, ECR_SOURCE_LABEL, REPD_STATUS, REPD_SOURCE, minVoltageForMW, searchRadiusKm, INFERENCE_NOTE } from '../services/connections';
 import { PlusIcon, MinusIcon } from '@heroicons/react/24/solid';
 
 interface MapProps {
@@ -205,6 +205,62 @@ const MapVisualization: React.FC<MapProps> = ({
         return best;
     };
 
+    // Most plausible substation for a site with no published connection (labelled as inferred)
+    const inferConnection = (lng: number, lat: number, mw: number): { name: string, kv: string, km: number, at: [number, number] } | { reason: string } => {
+        const map = mapRef.current!;
+        if (!map.getSource('energy')) return { reason: 'Map tiles not loaded, so no connection can be inferred.' };
+        if (map.getZoom() < 8) return { reason: 'Zoom in (to about level 9 or closer) to infer the likely connecting substation from OpenStreetMap.' };
+        const minV = minVoltageForMW(mw), maxKm = searchRadiusKm(mw);
+        const seen = new Set<string>();
+        let best: any = null, bestUnknown: any = null;
+        for (const f of map.querySourceFeatures('energy', { sourceLayer: 'substations' }) as any[]) {
+            const p = f.properties || {};
+            if (/minor_distribution|traction|industrial/.test(p.substation || '') && mw >= 1) continue;
+            const g = f.geometry;
+            let pt: number[] | null = null;
+            if (g.type === 'Point') pt = g.coordinates;
+            else if (g.type === 'Polygon') { const r = g.coordinates[0]; pt = [r.reduce((a: number, c: number[]) => a + c[0], 0) / r.length, r.reduce((a: number, c: number[]) => a + c[1], 0) / r.length]; }
+            else if (g.type === 'MultiPolygon') pt = g.coordinates[0][0][0];
+            if (!pt) continue;
+            const key = `${p.name || ''}|${pt[0].toFixed(3)},${pt[1].toFixed(3)}`;
+            if (seen.has(key)) continue; seen.add(key);
+            const d = Math.hypot((pt[1] - lat) * 111.32, (pt[0] - lng) * 111.32 * Math.cos(lat * Math.PI / 180));
+            if (d > maxKm) continue;
+            const volts = String(p.voltage || '').split(';').map((x: string) => parseInt(x, 10)).filter((x: number) => !isNaN(x));
+            const v = volts.length ? Math.max(...volts) : null;
+            const cand = { name: p.name || (p.ref ? `Substation ${p.ref}` : 'Unnamed substation'), kv: v ? fmtVoltage(volts.join(';')) : 'voltage not mapped', km: d, at: [pt[0], pt[1]] as [number, number] };
+            if (v !== null && v >= minV) { if (!best || d < best.km) best = cand; }
+            else if (v === null) { if (!bestUnknown || d < bestUnknown.km) bestUnknown = cand; }
+        }
+        const pick = best || bestUnknown;
+        return pick || { reason: `No suitable substation is mapped in OpenStreetMap within ${maxKm} km (or it is outside the area currently loaded).` };
+    };
+
+    const inferredHtml = (lng: number, lat: number, mw: number) => {
+        const r = inferConnection(lng, lat, mw);
+        const src = mapRef.current!.getSource('conn-lines') as maplibregl.GeoJSONSource | undefined;
+        if ('reason' in r) {
+            src?.setData(emptyFC as any);
+            return `<div style="margin-top:6px;border-top:1px solid #334155;padding-top:6px;font-size:11px;color:#94a3b8">Connection not published. ${esc(r.reason)}</div>`;
+        }
+        src?.setData({ type: 'FeatureCollection', features: [{ type: 'Feature', properties: { color: '#cbd5e1', connected: false }, geometry: { type: 'LineString', coordinates: [[lng, lat], r.at] } }] } as any);
+        return `<div style="margin-top:6px;border-top:1px solid #334155;padding-top:6px;font-size:11px"><div>Probably connects to: <b>${esc(r.name)}</b> <span style="color:#94a3b8">(${esc(r.kv)}, ${r.km.toFixed(1)} km)</span></div><div style="color:#fbbf24;font-size:9px;margin-top:2px">${esc(INFERENCE_NOTE)}</div></div>`;
+    };
+
+    const repdPopup = (e: any) => {
+        const p = e.features?.[0]?.properties;
+        if (!p) return;
+        const rows: [string, any][] = [
+            ['Type', `${FUEL_LABEL[p.fuel] || p.fuel}${p.technology ? ` (${p.technology})` : ''}`],
+            ['Capacity', mwFmt(+p.mw)],
+            ['Status', REPD_STATUS[p.status] || p.status],
+            ['Operator / applicant', p.operator],
+            ['REPD reference', p.repdId],
+        ];
+        const html = popupHtml(p.site, rows, `Source: ${esc(REPD_SOURCE)}.`).replace('</div></div>', `${inferredHtml(e.lngLat.lng, e.lngLat.lat, +p.mw)}</div></div>`);
+        showPopup(e.lngLat, html);
+    };
+
     const ecrPopup = (e: any) => {
         const p = e.features?.[0]?.properties;
         if (!p) return;
@@ -272,6 +328,7 @@ const MapVisualization: React.FC<MapProps> = ({
                 title = title || `${p['plant:source'] || ''} power station`;
                 rows = [['Fuel / source', p['plant:source']], ['Capacity', p['plant:output:electricity']], ['Operator', p.operator], ['Opened', p.start_date], ['Method', p['plant:method']]];
                 const t = tecForStation(connRef.current, p.name);
+                if (!t) { const mw = parseFloat(String(p['plant:output:electricity'] || '').replace(/[^0-9.]/g, '')) * (/kw/i.test(String(p['plant:output:electricity'])) ? 0.001 : /gw/i.test(String(p['plant:output:electricity'])) ? 1000 : 1); extra = inferredHtml(e.lngLat.lng, e.lngLat.lat, isFinite(mw) && mw > 0 ? mw : 5); }
                 if (t) extra = `<div style="margin-top:6px;border-top:1px solid #334155;padding-top:6px;font-size:11px"><div>Grid connection: <b>${esc(t.site)}</b></div><div style="color:#94a3b8">${esc(t.plantType)} · ${mwFmt(t.mwConnected || t.mwTotal)} · ${esc(t.status)}${t.hostTO ? ` · ${esc(t.hostTO)}` : ''}</div><div style="color:#64748b;font-size:9px;margin-top:2px">Source: NESO ${t.register === 'T' ? 'TEC' : 'Embedded'} Register, project "${esc(t.project)}" (matched by name)</div></div>`;
             } else if (layer.startsWith('osm-substations')) {
                 title = title || (p.power === 'converter' ? 'HVDC converter station' : 'Substation');
@@ -282,6 +339,9 @@ const MapVisualization: React.FC<MapProps> = ({
             } else if (layer.startsWith('osm-generators')) {
                 title = title || `${p['generator:source'] || ''} generator`;
                 rows = [['Source', p['generator:source']], ['Type', p['generator:type'] || p['generator:method']], ['Output', p['generator:output:electricity']], ['Operator', p.operator]];
+                const out = String(p['generator:output:electricity'] || '');
+                const mw = parseFloat(out.replace(/[^0-9.]/g, '')) * (/kw/i.test(out) ? 0.001 : /gw/i.test(out) ? 1000 : 1);
+                if (isFinite(mw) && mw >= 1) extra = inferredHtml(e.lngLat.lng, e.lngLat.lat, mw);
             } else if (layer === 'osm-lines' || layer === 'osm-cables') {
                 title = title || (p.power === 'cable' ? 'Power cable' : p.power === 'minor_line' ? 'Distribution line' : 'Power line');
                 rows = [['Voltage', fmtVoltage(p.voltage)], ['Circuits', p.circuits], ['Operator', p.operator], ['Reference', p.ref], ['Location', p.location]];
@@ -377,6 +437,21 @@ const MapVisualization: React.FC<MapProps> = ({
                 if (l) showPopup(e.lngLat, flowPopup(l));
             });
 
+            // Renewable Energy Planning Database sites not already in a DNO register (fills NGED, ENWL, SSEN areas)
+            map.addSource('repd', { type: 'geojson', data: emptyFC as any });
+            map.addLayer({ id: 'repd', type: 'circle', source: 'repd', minzoom: 7,
+                paint: {
+                    'circle-radius': ['interpolate', ['linear'], ['zoom'], 7, ['interpolate', ['linear'], ['get', 'mw'], 1, 1.5, 50, 3.5, 300, 6], 13, ['interpolate', ['linear'], ['get', 'mw'], 1, 4, 50, 8, 300, 12]],
+                    'circle-color': ['case', ['==', ['get', 'status'], 'O'], ['get', 'color'], 'rgba(0,0,0,0)'],
+                    'circle-opacity': 0.55,
+                    'circle-stroke-color': '#e2e8f0', 'circle-stroke-width': ['case', ['==', ['get', 'status'], 'O'], 0.8, 1.2], 'circle-stroke-opacity': 0.7,
+                } });
+            map.on('click', 'repd', (e: any) => {
+                if (e.originalEvent.__erHandled) return;
+                e.originalEvent.__erHandled = true;
+                repdPopup(e);
+            });
+
             map.addSource('ecr', { type: 'geojson', data: emptyFC as any });
             map.addLayer({ id: 'ecr', type: 'circle', source: 'ecr', minzoom: 7,
                 paint: {
@@ -388,6 +463,10 @@ const MapVisualization: React.FC<MapProps> = ({
             loadConnections().then(data => {
                 connRef.current = data;
                 if (!data) return;
+                (map.getSource('repd') as maplibregl.GeoJSONSource)?.setData({ type: 'FeatureCollection', features: data.repd.map(s => ({
+                    type: 'Feature', geometry: { type: 'Point', coordinates: [s.lng, s.lat] },
+                    properties: { ...s, color: FUEL_COLOUR[s.fuel] || '#94a3b8' },
+                })) } as any);
                 (map.getSource('ecr') as maplibregl.GeoJSONSource)?.setData({ type: 'FeatureCollection', features: data.ecr.map(s => ({
                     type: 'Feature', geometry: { type: 'Point', coordinates: [s.lng, s.lat] },
                     properties: { ...s, color: FUEL_COLOUR[s.fuel] || '#94a3b8' },
@@ -441,9 +520,10 @@ const MapVisualization: React.FC<MapProps> = ({
                 const p: any = dno.properties || {};
                 const ci = propsRef.current.regionalCarbon[p.name];
                 const ciHtml = ci ? `<div style="margin-top:6px;border-top:1px solid #334155;padding-top:6px"><div>Carbon intensity: <b>${ci.intensity} gCO2/kWh</b> (${esc(ci.index)})</div><div style="color:#94a3b8;font-size:11px">Local mix: ${ci.mix.slice(0, 4).map(m => `${esc(m.fuel)} ${m.perc}%`).join(', ')}</div><div style="color:#64748b;font-size:9px;margin-top:2px">Source: NESO Carbon Intensity API (live forecast)</div></div>` : '';
-                showPopup(e.lngLat, `<div style="padding:10px 12px;min-width:220px"><b>${esc(p.name)}</b><br><span style="color:#94a3b8">${esc(p.operator)}</span>${ciHtml}</div>`);
+                const noFeed = /north west/i.test(String(p.name)) ? `<div style="margin-top:6px;border-top:1px solid #334155;padding-top:6px;font-size:11px;color:#fbbf24">No open live power-cut feed for this area: Electricity North West publishes it under a restricted licence. Check <a href="https://www.enwl.co.uk" target="_blank" rel="noopener" style="color:#67e8f9">enwl.co.uk</a> or call 105.</div>` : '';
+                showPopup(e.lngLat, `<div style="padding:10px 12px;min-width:220px"><b>${esc(p.name)}</b><br><span style="color:#94a3b8">${esc(p.operator)}</span>${ciHtml}${noFeed}</div>`);
             });
-            ['assets', 'asset-lines', 'asset-lines-dashed', 'ecr', 'energy-flows-base', ...OSM_LAYERS].forEach(l => {
+            ['assets', 'asset-lines', 'asset-lines-dashed', 'ecr', 'repd', 'energy-flows-base', ...OSM_LAYERS].forEach(l => {
                 if (!map.getLayer(l)) return;
                 map.on('mouseenter', l, () => { map.getCanvas().style.cursor = 'pointer'; });
                 map.on('mouseleave', l, () => { map.getCanvas().style.cursor = ''; });
@@ -468,7 +548,7 @@ const MapVisualization: React.FC<MapProps> = ({
         if (!map || !ready) return;
         const vis = (layer: string, on: boolean) => { if (map.getLayer(layer)) map.setLayoutProperty(layer, 'visibility', on ? 'visible' : 'none'); };
         const gen = filters.has('Generation'), tx = filters.has('Transmission'), dx = filters.has('Distribution');
-        ['osm-plants-fill', 'osm-plants-icon', 'osm-generators', 'osm-generators-fill', 'ecr'].forEach(l => vis(l, gen));
+        ['osm-plants-fill', 'osm-plants-icon', 'osm-generators', 'osm-generators-fill', 'ecr', 'repd'].forEach(l => vis(l, gen));
         vis('osm-lines', tx || dx);
         if (map.getLayer('osm-lines')) {
             const parts: any[] = [];

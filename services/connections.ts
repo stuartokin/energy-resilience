@@ -9,8 +9,11 @@ import { markOk, markFail } from './health';
 
 export interface EcrSite { site: string; lat: number; lng: number; gsp: string; bsp: string; primary: string; kV: number | null; fuel: string; technology: string; mw: number; connected: boolean; dno: string; }
 export interface TecProject { project: string; site: string; mwConnected: number; mwTotal: number; plantType: string; status: string; hostTO: string; effectiveFrom: string; register: 'T' | 'E'; }
+export interface RepdSite { site: string; lat: number; lng: number; fuel: string; technology: string; mw: number; status: 'O' | 'C' | 'A'; operator: string; repdId: string; }
+export const REPD_STATUS: Record<string, string> = { O: 'Operational', C: 'Under construction', A: 'Planning granted, awaiting construction' };
+export const REPD_SOURCE = 'DESNZ Renewable Energy Planning Database (Open Government Licence)';
 export interface ConnectionSource { id: string; name: string; licence?: string; records?: number; ok: boolean; note?: string; }
-export interface ConnectionsData { built: string; sources: ConnectionSource[]; ecr: EcrSite[]; tec: TecProject[]; byName: Map<string, { ecr: { site: EcrSite; level: 'GSP' | 'BSP' | 'Primary' }[]; tec: TecProject[] }>; }
+export interface ConnectionsData { built: string; sources: ConnectionSource[]; ecr: EcrSite[]; tec: TecProject[]; repd: RepdSite[]; byName: Map<string, { ecr: { site: EcrSite; level: 'GSP' | 'BSP' | 'Primary' }[]; tec: TecProject[] }>; }
 
 export const ECR_SOURCE_LABEL: Record<string, string> = {
     npg: 'Northern Powergrid Embedded Capacity Register (NPg Open Data Licence)',
@@ -44,6 +47,7 @@ export const loadConnections = (): Promise<ConnectionsData | null> => {
             const j = await res.json();
             const ecr: EcrSite[] = (j.ecr || []).map((r: any[]) => ({ site: r[0], lat: r[1], lng: r[2], gsp: r[3], bsp: r[4], primary: r[5], kV: r[6], fuel: r[7], technology: r[8], mw: r[9], connected: r[10] === 'C', dno: r[11] }));
             const tec: TecProject[] = (j.tec || []).map((r: any[]) => ({ project: r[0], site: r[1], mwConnected: r[2], mwTotal: r[3], plantType: r[4], status: r[5], hostTO: r[6], effectiveFrom: r[7], register: r[8] }));
+            const repd: RepdSite[] = (j.repd || []).map((r: any[]) => ({ site: r[0], lat: r[1], lng: r[2], fuel: r[3], technology: r[4], mw: r[5], status: r[6], operator: r[7], repdId: r[8] }));
             const byName: ConnectionsData['byName'] = new Map();
             const slot = (name: string) => {
                 const k = normaliseSubName(name);
@@ -63,7 +67,7 @@ export const loadConnections = (): Promise<ConnectionsData | null> => {
             }
             for (const t of tec) slot(t.site)?.tec.push(t);
             markOk('connections');
-            return { built: j.built, sources: j.sources || [], ecr, tec, byName };
+            return { built: j.built, sources: j.sources || [], ecr, tec, repd, byName };
         } catch (e: any) {
             markFail('connections', e?.message || 'unavailable');
             return null;
@@ -129,3 +133,11 @@ export const FUEL_COLOUR: Record<string, string> = {
     storage: '#a3e635', solar: '#facc15', wind: '#10b981', wind_offshore: '#14b8a6', hydro: '#60a5fa', biomass: '#84cc16',
     waste: '#a8a29e', gas: '#f97316', oil: '#ef4444', nuclear: '#a855f7', demand: '#e879f9', other: '#94a3b8',
 };
+
+// ---------- Inferred connections (where no register publishes one) ----------
+// Rule of thumb, an assumption: larger sites connect at higher voltage. Typical GB distribution
+// connection voltages are 11 kV, 33 kV, 66 kV (some areas) and 132 kV. Used only to choose the most
+// plausible nearby substation; the result is always labelled as inferred.
+export const minVoltageForMW = (mw: number) => (mw < 1 ? 0 : mw < 10 ? 11000 : mw < 30 ? 33000 : mw < 100 ? 66000 : 132000);
+export const searchRadiusKm = (mw: number) => (mw < 10 ? 10 : mw < 100 ? 25 : 50);
+export const INFERENCE_NOTE = 'Inferred from OpenStreetMap: the nearest mapped substation with a voltage suited to the site\'s size. Not published by the network operator, so it may be wrong.';

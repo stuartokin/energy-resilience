@@ -7,17 +7,17 @@
 //   NGED  - National Grid Electricity Distribution (Midlands, South West, South Wales)  no key
 //   SSEN  - Scottish and Southern Electricity Networks (North Scotland, Southern England) no key
 //   SPEN  - SP Energy Networks (Central & South Scotland, Merseyside & North Wales)  needs SPEN_API_KEY
-//   ENWL  - Electricity North West (North West England)  needs ENWL_API_KEY
+//   (Electricity North West is not included: its live data is published under a restricted "Shared" licence.)
 //
 // UK Power Networks and Northern Powergrid are fetched by the website directly.
 //
 // It also serves two other feeds that browsers can't read directly:
-//   /gas       - National Gas: live NTS demand, supply and linepack
+//   /gas       - National Gas: live NTS demand, supply, linepack and flows by entry/export point
 //   /warnings  - Met Office: current UK weather warnings
 //
 // Setup: paste this whole file into a new Cloudflare Worker and deploy.
 // Optional secrets (Worker > Settings > Variables and Secrets > Add > Secret):
-//   SPEN_API_KEY, ENWL_API_KEY
+//   SPEN_API_KEY
 // Nothing else is stored. Results are cached for 2 minutes to be kind to the DNOs.
 
 const ALLOWED_ORIGINS = [
@@ -139,10 +139,6 @@ async function collectAll(env) {
         { id: 'spen', name: 'SP Energy Networks', key: 'SPEN_API_KEY', run: () => fetchNeoOds(
             'https://spenergynetworks.opendatasoft.com', 'national-energy-outage-data', env.SPEN_API_KEY, 'SP Energy Networks', 'spen', {
                 customers: null, postcode: 'post_code', start: ['date_of_reported_fault', 'planned_outage_start_date'], restored: 'date_of_restoration',
-            }) },
-        { id: 'enwl', name: 'Electricity North West', key: 'ENWL_API_KEY', run: () => fetchNeoOds(
-            'https://electricitynorthwest.opendatasoft.com', 'sp-enw-live-neop', env.ENWL_API_KEY, 'Electricity North West', 'enwl', {
-                customers: 'confirmedoff', postcode: 'postcode', start: ['outage_start_date'], restored: 'date_time_of_restoration',
             }) },
     ];
 

@@ -3,6 +3,12 @@
 Newest first. Mirrored in the app under **Help → What's new** (`content/changelog.ts`).
 Versioning: MAJOR = big change in what the app is; MINOR = new features or data sources; PATCH = fixes.
 
+## 3.6.0 - 2026-11-12 - Planning database sites and inferred connections
+- `build-connections.mjs` adds REPD (DESNZ, OGL): latest quarterly CSV found via the gov.uk content API; operational, under construction and awaiting construction, 1 MW+, GB only; sites within 1 km of a same-fuel ECR site dropped. Stored as `repd` in `connections.json`.
+- Map: `repd` layer; popups for REPD sites and for OSM plants/generators without a TEC match infer the likely substation (nearest OSM substation at a voltage suited to MW, labelled as inferred, dashed line).
+- System Status: one row per connection register (records, build date).
+- ENWL: no-feed notice in the outages panel, DNO popup and Analyst context; removed from the Worker. **Redeploy the Worker** (optional; only removes the ENWL attempt).
+
 ## 3.5.0 - 2026-11-12 - Phase 4: scenario library and impact model; energy flows; analyst questions
 - `content/scenarios.ts`: 28 generic scenarios with `model`, `rationale`, `sources`, `customersBasis`; replaces the old built-in list (the vendor-named and site-specific ones are gone).
 - `content/assumptions.ts`: every model value with source or reasoning (VoLL, average demand per customer, GB customers, SQSS loss limit, LFDD scaling, ESRS, ESEC rota block, gas CV) and reference events.

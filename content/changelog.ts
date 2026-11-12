@@ -6,6 +6,17 @@ export interface ChangeEntry { version: string; date: string; title: string; cha
 
 export const CHANGELOG: ChangeEntry[] = [
     {
+        version: '3.6.0',
+        date: '2026-11-12',
+        title: 'Filling the gaps: planning database sites and inferred connections',
+        changes: [
+            'New map layer: renewable and storage sites of 1 MW and above from the government\'s Renewable Energy Planning Database, where no network register already covers them. This fills the NGED, Electricity North West and SSEN areas.',
+            'Click one of these sites, or a power station or generator from OpenStreetMap with no published connection, to see the substation it probably connects to. This is inferred from OpenStreetMap (nearest substation with a voltage suited to the site\'s size), drawn as a dashed line, and clearly labelled as inferred.',
+            'Help → System Status now lists each connection register with its record count and build date, so you can see the SPEN and UKPN keys working.',
+            'North West England is marked as having no open live power-cut feed, with a link to Electricity North West and the 105 number. The Worker no longer tries to fetch ENWL data.',
+        ],
+    },
+    {
         version: '3.5.0',
         date: '2026-11-12',
         title: 'Phase 4: sourced scenario library and impact model; live energy flows; analyst questions',

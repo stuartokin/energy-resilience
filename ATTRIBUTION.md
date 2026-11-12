@@ -17,6 +17,7 @@ This app displays data from the sources below. Each is credited in the app (map 
 | Environment Agency flood monitoring API | Open Government Licence v3.0 | "Environment Agency" |
 | OpenStreetMap (via Overpass and Nominatim) | ODbL 1.0 | "© OpenStreetMap contributors" on the map |
 | OSUKED Power Station Dictionary | MIT | Help → About & sources |
+| DESNZ Renewable Energy Planning Database | Open Government Licence v3.0 | "DESNZ Renewable Energy Planning Database" in popups |
 | NESO TEC Register, Embedded Register | NESO Open Data Licence | "NESO TEC / Embedded Register" in popups |
 | Northern Powergrid Embedded Capacity Register | Northern Powergrid Open Data Licence v1.0 | "Northern Powergrid Embedded Capacity Register" in popups |
 | SP Energy Networks Embedded Capacity Register | CC BY 4.0 | "SP Energy Networks Embedded Capacity Register" in popups |
