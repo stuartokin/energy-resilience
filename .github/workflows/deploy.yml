@@ -50,9 +50,13 @@ jobs:
           # Only publish (and cache) the tiles if the build succeeded
           mkdir -p public/tiles && mv energy.pmtiles public/tiles/ && ls -lh public/tiles
 
-      - name: Build OpenStreetMap infrastructure snapshot
+      - name: Build OpenStreetMap snapshot and connection registers
         run: node scripts/build-osm-snapshot.mjs
         continue-on-error: true
+        env:
+          # Optional free keys for two DNO connection registers (skipped if not set). Never shown on the site.
+          SPEN_API_KEY: ${{ secrets.SPEN_API_KEY }}
+          UKPN_API_KEY: ${{ secrets.UKPN_API_KEY }}
         timeout-minutes: 20
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
