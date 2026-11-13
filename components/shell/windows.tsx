@@ -24,7 +24,7 @@ export interface WinDef {
 }
 
 interface Geo { x: number; y: number; w?: number; h?: number; zoom?: number }
-interface Persisted {
+export interface Persisted {
     states: Record<string, WinState>;
     geo: Record<string, Geo>;
     active: Record<AppMode, string>;
@@ -45,6 +45,7 @@ export const ZOOMS = [0.8, 0.9, 1, 1.1, 1.25, 1.4];
 export const useWindows = () => {
     const [p, setP] = useState<Persisted>(load);
     const [stack, setStack] = useState<string[]>([]);
+    const [version, setVersion] = useState(0); // bumps when a saved view is loaded, so floating windows re-read their position
     useEffect(() => { save(p); }, [p]);
     const stateOf = useCallback((id: string): WinState => p.states[id] || 'docked', [p.states]);
     const setState = (id: string, s: WinState) => setP(prev => ({ ...prev, states: { ...prev.states, [id]: s } }));
@@ -67,6 +68,10 @@ export const useWindows = () => {
         setPanelW: (w: number) => setP(prev => ({ ...prev, panelW: Math.max(320, Math.min(680, w)) })),
         setCollapsed: (c: boolean) => setP(prev => ({ ...prev, collapsed: c })),
         reset: () => { clearWindowLayout(); setP(DEFAULT); setStack([]); },
+        version,
+        // Saved views (services/views.ts)
+        snapshot: (): Persisted => p,
+        restore: (np: Partial<Persisted>) => { setP({ ...DEFAULT, ...np, active: { ...DEFAULT.active, ...(np.active || {}) } }); setStack([]); setVersion(v => v + 1); },
     };
 };
 export type Windows = ReturnType<typeof useWindows>;

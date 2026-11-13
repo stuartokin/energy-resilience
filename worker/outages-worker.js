@@ -15,10 +15,23 @@
 //   /gas       - National Gas: live NTS demand, supply, linepack and flows by entry/export point
 //   /warnings  - Met Office: current UK weather warnings
 //
+// It also keeps a history (the "data lake") so the site can chart how the system behaved over time.
+// Every 15 minutes (a Cron Trigger) it takes one snapshot of: demand and frequency, generation by fuel and
+// interconnector flows (Elexon), gas supply by entry point (National Gas), power cuts from all five
+// open network feeds, Met Office warnings and Environment Agency flood warnings. Snapshots are added to one
+// record per day in Workers KV (free tier). The site reads them from:
+//   /history            - which days are stored
+//   /history/day?d=...  - one day (YYYY-MM-DD, UTC)
+// Live power-cut feeds disappear once a cut is fixed, so this is the only place that history is kept.
+//
 // Setup: paste this whole file into a new Cloudflare Worker and deploy.
 // Optional secrets (Worker > Settings > Variables and Secrets > Add > Secret):
 //   SPEN_API_KEY
-// Nothing else is stored. Results are cached for 2 minutes to be kind to the DNOs.
+// For the history (optional, free):
+//   1. Storage & Databases > KV > Create a namespace called energy-lake
+//   2. Worker > Settings > Bindings > Add > KV namespace: variable name LAKE, namespace energy-lake
+//   3. Worker > Settings > Triggers > Cron Triggers > Add:  */15 * * * *
+// Only public, aggregate data is stored: no personal data. Live results are cached for 2 minutes.
 
 const ALLOWED_ORIGINS = [
     'https://stuartokin.github.io',
@@ -44,13 +57,15 @@ export default {
             '/outages': () => collectAll(env),
             '/gas': () => fetchGas(),
             '/warnings': () => fetchMetWarnings(),
+            '/history': () => historyIndex(env),
+            '/history/day': () => historyDay(env, url.searchParams.get('d')),
         };
         const route = routes[url.pathname];
         if (!route) return new Response('Not found', { status: 404, headers: cors });
 
         // Shared cache so many visitors cause at most one fetch per source every 2 minutes.
         const cache = caches.default;
-        const cacheKey = new Request(new URL(`/cache-v3${url.pathname === '/' ? '/outages' : url.pathname}`, url).toString());
+        const cacheKey = new Request(new URL(`/cache-v3${url.pathname === '/' ? '/outages' : url.pathname}${url.pathname === '/history/day' ? `/${url.searchParams.get('d')}` : ''}`, url).toString());
         let cached = await cache.match(cacheKey);
         if (!cached) {
             let body;
@@ -64,6 +79,11 @@ export default {
         const res = new Response(cached.body, cached);
         Object.entries(cors).forEach(([k, v]) => res.headers.set(k, v));
         return res;
+    },
+
+    // Every 15 minutes: add one snapshot to today's history record (needs the LAKE binding)
+    async scheduled(event, env, ctx) {
+        if (env.LAKE) ctx.waitUntil(snapshot(env));
     },
 };
 
@@ -307,4 +327,143 @@ function parseCsv(text) {
     if (field !== '' || row.length) { row.push(field); rows.push(row); }
     const head = rows.shift() || [];
     return rows.map(r => Object.fromEntries(head.map((h, i) => [h.trim(), r[i] ?? ''])));
+}
+
+
+// =====================================================================================================
+// History ("data lake"): one compact record per UTC day in Workers KV, key "day:YYYY-MM-DD".
+// Columns: t (HH:MM UTC) and, for each, one value per snapshot (null when a source didn't answer).
+// =====================================================================================================
+const ELEXON = 'https://data.elexon.co.uk/bmrs/api/v1';
+
+async function historyIndex(env) {
+    if (!env.LAKE) return { error: 'History is not set up on the Worker yet (KV binding LAKE and a Cron Trigger).', days: [] };
+    return JSON.parse((await env.LAKE.get('index')) || '{"days":[]}');
+}
+async function historyDay(env, d) {
+    if (!env.LAKE) return { error: 'History is not set up' };
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d || '')) return { error: 'Give a day as d=YYYY-MM-DD' };
+    return JSON.parse((await env.LAKE.get(`day:${d}`)) || 'null') || { error: 'No data for that day' };
+}
+
+const pad = (arr, n) => { while (arr.length < n) arr.push(null); return arr; };
+const put = (obj, key, i, v) => { const a = pad(obj[key] || (obj[key] = []), i); a[i] = v; };
+
+async function snapshot(env) {
+    const now = new Date();
+    const date = now.toISOString().slice(0, 10);
+    const hhmm = `${String(now.getUTCHours()).padStart(2, '0')}:${String(Math.floor(now.getUTCMinutes() / 15) * 15).padStart(2, '0')}`;
+    const key = `day:${date}`;
+    const day = JSON.parse((await env.LAKE.get(key)) || 'null') || { v: 1, date, t: [], demand: [], freq: {}, fuel: {}, gas: { supply: [], demand: [], linepack: [], entry: {} }, cuts: {}, events: {}, warn: {}, floods: {} };
+    if (day.t.includes(hhmm)) return; // already have this slot
+    const i = day.t.length;
+    day.t.push(hhmm);
+    const safe = p => withTimeout(p, 20000).catch(() => null);
+    const [fuel, freq, demand, gas, cuts, warnings, floods] = await Promise.all([
+        safe(snapFuel()), safe(snapFreq()), safe(snapDemand()), safe(fetchGas()), safe(snapCuts(env)), safe(fetchMetWarnings()), safe(snapFloods()),
+    ]);
+    put(day, 'demand', i, demand);
+    for (const k of ['last', 'min', 'max', 'out']) put(day.freq, k, i, freq ? freq[k] : null);
+    if (fuel) for (const [f, mw] of Object.entries(fuel)) put(day.fuel, f, i, mw);
+    put(day.gas, 'supply', i, gas?.totalSupply ?? null);
+    put(day.gas, 'demand', i, gas?.ntsDemand ?? null);
+    put(day.gas, 'linepack', i, gas?.linepack ?? null);
+    if (gas) for (const [n, v] of Object.entries({ ...gas.entryPoints, ...gas.terminals })) put(day.gas.entry, n, i, v);
+    if (cuts) for (const [dno, c] of Object.entries(cuts)) {
+        const o = day.cuts[dno] || (day.cuts[dno] = {});
+        put(o, 'c', i, c.ok ? c.customers : null);
+        put(o, 'u', i, c.ok ? c.unplanned : null);
+        put(o, 'p', i, c.ok ? c.planned : null);
+        for (const e of c.events) {
+            const ev = day.events[e.id];
+            if (ev) { ev.l = hhmm; ev.c = Math.max(ev.c, e.c); }
+            else day.events[e.id] = { d: dno, la: e.la, lo: e.lo, c: e.c, p: e.p, f: hhmm, l: hhmm, s: e.s };
+        }
+    }
+    if (warnings) for (const w of warnings.warnings || []) {
+        const k = w.title.slice(0, 160);
+        if (day.warn[k]) day.warn[k].l = hhmm; else day.warn[k] = { lvl: w.level, type: w.type, f: hhmm, l: hhmm };
+    }
+    for (const k of ['severe', 'warning', 'alert']) put(day.floods, k, i, floods ? floods[k] : null);
+    // Pad every column to the same length
+    const n = day.t.length;
+    const padAll = o => Object.values(o).forEach(a => Array.isArray(a) && pad(a, n));
+    padAll(day); padAll(day.freq); padAll(day.fuel); padAll(day.gas); padAll(day.gas.entry); padAll(day.floods);
+    Object.values(day.cuts).forEach(padAll);
+    await env.LAKE.put(key, JSON.stringify(day));
+    const index = JSON.parse((await env.LAKE.get('index')) || '{"days":[]}');
+    if (!index.days.includes(date)) {
+        index.days.push(date);
+        index.days.sort();
+        index.since = index.since || date;
+        await env.LAKE.put('index', JSON.stringify(index));
+    }
+}
+
+// Generation by fuel, including signed interconnector flows (MW, latest 5-minute value)
+async function snapFuel() {
+    const to = new Date(), from = new Date(to.getTime() - 25 * 60000);
+    const json = await (await fetch(`${ELEXON}/datasets/FUELINST?publishDateTimeFrom=${from.toISOString()}&publishDateTimeTo=${to.toISOString()}&format=json`)).json();
+    const latest = {};
+    for (const r of json.data || json || []) {
+        const t = r.startTime || r.publishTime || '';
+        if (!latest[r.fuelType] || t >= latest[r.fuelType].t) latest[r.fuelType] = { t, mw: Math.round(r.generation || 0) };
+    }
+    return Object.fromEntries(Object.entries(latest).map(([k, v]) => [k, v.mw]));
+}
+// Frequency over the last 15 minutes: latest, min, max and seconds outside 49.8-50.2 Hz (15-second readings)
+async function snapFreq() {
+    const to = new Date(), from = new Date(to.getTime() - 15 * 60000);
+    const json = await (await fetch(`${ELEXON}/system/frequency?from=${from.toISOString()}&to=${to.toISOString()}&format=json`)).json();
+    const f = (json.data || []).map(r => r.frequency).filter(x => typeof x === 'number');
+    if (!f.length) return null;
+    const r3 = x => Math.round(x * 1000) / 1000;
+    return { last: r3(f[f.length - 1]), min: r3(Math.min(...f)), max: r3(Math.max(...f)), out: f.filter(x => x < 49.8 || x > 50.2).length * 15 };
+}
+async function snapDemand() {
+    const rows = await (await fetch(`${ELEXON}/demand/outturn/summary?format=json`)).json();
+    const list = Array.isArray(rows) ? rows : rows.data || [];
+    const last = list[list.length - 1];
+    return last?.demand ? Math.round(last.demand) : null;
+}
+// Environment Agency flood warnings in force, by severity (1 severe, 2 warning, 3 alert)
+async function snapFloods() {
+    const json = await (await fetch('https://environment.data.gov.uk/flood-monitoring/id/floods')).json();
+    const items = json.items || [];
+    const n = l => items.filter(x => x.severityLevel === l).length;
+    return { severe: n(1), warning: n(2), alert: n(3) };
+}
+// Power cuts from every open feed: per network, customers off (unplanned), counts, and each cut (no personal data)
+async function snapCuts(env) {
+    const out = {};
+    const add = (dno, ok, list) => {
+        const un = list.filter(o => !/^planned/i.test(o.description || ''));
+        out[dno] = {
+            ok, customers: un.reduce((a, o) => a + (o.consumersAffected || 0), 0), unplanned: un.length, planned: list.length - un.length,
+            events: list.map(o => ({ id: o.id, la: Math.round(o.lat * 1000) / 1000, lo: Math.round(o.lng * 1000) / 1000, c: o.consumersAffected || 0, p: /^planned/i.test(o.description || '') ? 1 : 0, s: o.startTime || '' })),
+        };
+    };
+    const [worker, ukpn, npg] = await Promise.all([collectAll(env).catch(() => null), fetchUkpn().catch(() => null), fetchNpg().catch(() => null)]);
+    if (worker) for (const src of worker.sources) add(src.id, src.ok, worker.outages.filter(o => o.id.startsWith(`${src.id}_`)));
+    add('ukpn', !!ukpn, ukpn || []);
+    add('npg', !!npg, npg || []);
+    return out;
+}
+async function fetchUkpn() {
+    const json = await (await fetch('https://ukpowernetworks.opendatasoft.com/api/explore/v2.1/catalog/datasets/ukpn-live-faults/records?limit=100')).json();
+    return (json.results || []).filter(r => !r.restoreddatetime && r.geopoint && r.powercuttype !== 'Restored').map(r => ({
+        id: `ukpn_${r.incidentreference}`, lat: r.geopoint.lat, lng: r.geopoint.lon,
+        consumersAffected: r.nocustomeraffected || r.noplannedcustomers || 0,
+        description: r.powercuttype === 'Planned' ? 'Planned work' : 'Unplanned power cut', startTime: r.receiveddate || r.creationdatetime || '',
+    }));
+}
+async function fetchNpg() {
+    const fields = 'reference,totalconfirmedpowercut,totalpredictedpowercut,natureofoutage,loggedtime,incidentstatus,lat,lng';
+    const rows = await (await fetch(`https://northernpowergrid.opendatasoft.com/api/explore/v2.1/catalog/datasets/live-power-cuts-data/exports/json?select=${fields}&where=incidentstatus!%3D6`)).json();
+    const g = new Map();
+    for (const r of rows || []) if (typeof r.lat === 'number' && typeof r.lng === 'number' && !g.has(r.reference)) g.set(r.reference, r);
+    return [...g.values()].map(r => ({
+        id: `npg_${r.reference}`, lat: r.lat, lng: r.lng, consumersAffected: r.totalconfirmedpowercut || r.totalpredictedpowercut || 0,
+        description: r.natureofoutage === 'Planned Work on System' ? 'Planned work' : 'Unplanned power cut', startTime: r.loggedtime || '',
+    }));
 }

@@ -1,6 +1,6 @@
 import { AssetType, InfrastructureAsset, RegionConfig, RiskScenario, TimelineStep, DNORegion } from './types';
 
-export const APP_VERSION = "4.2.0"; // keep in step with content/changelog.ts and CHANGELOG.md
+export const APP_VERSION = "4.3.0"; // keep in step with content/changelog.ts and CHANGELOG.md
 // Set at build time (vite.config.ts) - the date and commit of the published build.
 declare const __BUILD_DATE__: string;
 declare const __BUILD_COMMIT__: string;

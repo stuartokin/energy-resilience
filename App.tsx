@@ -1,21 +1,19 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { 
-    RegionConfig, InfrastructureAsset, RiskScenario, TimelineStep, AssetType, SaveData, OutageEvent, GenerationMix, DNORegion, GeneratorOutage 
+    RegionConfig, InfrastructureAsset, RiskScenario, TimelineStep, OutageEvent, GenerationMix, DNORegion, GeneratorOutage 
 } from './types';
 import { 
-    REGIONS, UK_ASSETS_SEED, ASSET_TYPES, INITIAL_SCENARIOS, UK_DNO_REGIONS,
-    APP_VERSION, BUILD_DATE
+    REGIONS, UK_ASSETS_SEED, ASSET_TYPES, INITIAL_SCENARIOS, UK_DNO_REGIONS
 } from './constants';
 import { 
-    fetchEnergyInfrastructure, generateRiskScenarios, calculateScenarioImpact,
+    fetchEnergyInfrastructure, generateRiskScenarios, 
     generateVideoReportScript, generateNarratedAudio, generateSlideshowImages, fetchRealTimeOutages,
-    getApiSystemStatus, fetchNESOPowerData, fetchHistoricalOutages, fetchGenerationMix,
-    searchInfrastructureAssets, loadDnoBoundaries, fetchGeneratorOutages, outageCoverageNow, OUTAGE_COVERAGE
+    getApiSystemStatus, fetchNESOPowerData, fetchGenerationMix,
+    searchInfrastructureAssets, loadDnoBoundaries, fetchGeneratorOutages, outageCoverageNow
 } from './services/geminiService';
 import MapVisualization from './components/MapVisualization';
 import ChatPanel from './components/ChatPanel';
-import { ImpactChart } from './components/Charts';
 import AssetDetails from './components/AssetDetails';
 import ScenarioManager from './components/ScenarioManager';
 import TimelineControl from './components/TimelineControl';
@@ -23,10 +21,8 @@ import TourGuide from './components/TourGuide';
 import OutageListModal from './components/OutageListModal';
 import HelpModal from './components/HelpModal';
 import ReportModal from './components/ReportModal';
-import DraggablePanel from './components/DraggablePanel';
 import { useLayout, clearSavedLayout, applyFontSize, getFontSize, FONT_SIZES } from './components/layout';
 import { statusOf } from './services/health';
-import GenerationListPanel from './components/GenerationListPanel';
 import GridHistoryModal from './components/GridHistoryModal';
 import AiKeyModal from './components/AiKeyModal';
 import LiveSystemsPanel from './components/LiveSystemsPanel';
@@ -37,23 +33,27 @@ import { OverviewPanel, ElectricityPanel, OutagesPanel } from './components/pane
 import { ScenarioLibraryPanel, ResultsPanel, ScenarioModelPanel } from './components/panels/ScenarioPanels';
 import { buildFlows, GW_PER_MCMD } from './services/flows';
 import { adoptProposal } from './content/scenarios';
-import { captionsFor, resolveRoutes, fleetOf, CutRoute, footprintOf, FOOTPRINT_NOTE, SCENARIO_COLOURS } from './services/footprint';
-import { buildTimeline, methodNote } from './services/impactModel';
+import { HistorySettings, DEFAULT_HISTORY } from './components/panels/HistoryPanel';
+import { SavedView, listViews, saveNamedView, deleteNamedView, downloadView, readViewFile, viewLink, viewFromHash } from './services/views';
+const HistoryPanel = React.lazy(() => import('./components/panels/HistoryPanel'));
+const ConcentrationPanel = React.lazy(() => import('./components/panels/ConcentrationPanel'));
+const HowItsBuilt = React.lazy(() => import('./components/HowItsBuilt'));
+import { captionsFor, resolveRoutes, fleetOf, CutRoute, footprintOf } from './services/footprint';
+import { buildTimeline } from './services/impactModel';
 import { fetchInterconnectorFlows, fetchRegionalCarbon, fetchFloodWarnings, fetchGasSnapshot, fetchWeatherWarnings, fetchSystemWarnings, InterconnectorFlow, RegionalCarbon, FloodWarning, GasSnapshot, WeatherWarning, SystemWarning } from './services/liveSystems';
 import { hasAiKey, onAiKeyChange, onAiKeyRequired } from './services/aiKey';
 
 import { 
-    GlobeAmericasIcon, BoltIcon, ExclamationTriangleIcon, PlayIcon, PauseIcon, 
+    BoltIcon, ExclamationTriangleIcon, 
     ArrowPathIcon, InformationCircleIcon, VideoCameraIcon, DocumentTextIcon,
-    SpeakerWaveIcon, XMarkIcon, FunnelIcon, ChevronDownIcon, ArrowDownTrayIcon, 
-    QuestionMarkCircleIcon, PrinterIcon, HomeIcon, SignalIcon, SignalSlashIcon, 
-    ArrowsPointingOutIcon, ArrowsPointingInIcon, ShieldCheckIcon,
-    ChevronUpIcon, MinusIcon, ListBulletIcon, ChatBubbleLeftRightIcon, WrenchScrewdriverIcon, PauseCircleIcon,
-    ClockIcon, ChartBarIcon, ArrowPathRoundedSquareIcon, MapIcon, TruckIcon, PowerIcon, MapPinIcon,
-    StopCircleIcon, MagnifyingGlassIcon, StopIcon, CloudIcon, SparklesIcon, ArrowsRightLeftIcon
+    FunnelIcon, 
+    QuestionMarkCircleIcon, PrinterIcon, SignalIcon, 
+    
+    ListBulletIcon, ChatBubbleLeftRightIcon, WrenchScrewdriverIcon, 
+    ChartBarIcon, MapIcon, 
+    MagnifyingGlassIcon, StopIcon, CloudIcon, SparklesIcon, ArrowsRightLeftIcon
+    , ClockIcon, ScaleIcon, PresentationChartLineIcon, CubeTransparentIcon
 } from '@heroicons/react/24/solid';
-
-const getAIStudio = () => (window as any).aistudio;
 
 type ChartMode = 'normal' | 'minimal' | 'hidden';
 
@@ -112,51 +112,18 @@ const UpdateTimer = React.memo(({ onTrigger, isPaused, intervalMinutes }: { onTr
 });
 
 // Panel Configuration for Pinning
-const PANEL_CONFIG: Record<string, { title: string, abbr: string, icon: any }> = {
-    'infra': { title: 'Infrastructure', abbr: 'Infra', icon: FunnelIcon },
-    'data_sync': { title: 'Data Sync', abbr: 'Sync', icon: ArrowPathIcon },
-    'scenarios_pane': { title: 'Scenarios', abbr: 'Risks', icon: PlayIcon },
-    'grid_status': { title: 'Grid Status', abbr: 'Grid', icon: ShieldCheckIcon },
-    'system_monitor': { title: 'System Monitor', abbr: 'System', icon: ShieldCheckIcon },
-    'standby_list': { title: 'Standby Capacity', abbr: 'Standby', icon: PauseCircleIcon },
-    'engineering_work': { title: 'Engineering Work', abbr: 'Eng.', icon: WrenchScrewdriverIcon },
-    'scenario_stats': { title: 'Scenario Stats', abbr: 'Stats', icon: VideoCameraIcon },
-    'chat': { title: 'Analyst AI', abbr: 'Analyst', icon: ChatBubbleLeftRightIcon },
-    'supply_chain': { title: 'Supply Chain', abbr: 'Supply', icon: TruckIcon },
-    'reporting': { title: 'Reporting', abbr: 'Report', icon: PrinterIcon },
-    'reset_view': { title: 'View Control', abbr: 'View', icon: StopCircleIcon },
-    'live_systems': { title: 'Live Systems', abbr: 'Live', icon: SignalIcon },
-    'flows': { title: 'Energy Flows', abbr: 'Flows', icon: ArrowsRightLeftIcon }
-};
-
-const PinnedItem = ({ id, onUnpin }: { id: string, onUnpin: (id: string, x?: number, y?: number) => void }) => {
-    const config = PANEL_CONFIG[id];
-    if (!config) return null;
-
-    const handleDragEnd = (e: React.DragEvent) => {
-        // If dropped significantly below header (approx 60px), consider it unpinned
-        if (e.clientY > 80) {
-            onUnpin(id, e.clientX - 100, e.clientY);
-        }
-    };
-
-    return (
-        <div 
-            draggable
-            onDragEnd={handleDragEnd}
-            onClick={() => onUnpin(id)}
-            className="flex items-center gap-2 px-3 py-1 bg-slate-800/80 border border-slate-700/50 rounded-full cursor-grab active:cursor-grabbing hover:bg-slate-700 transition-all group select-none shadow-sm hover:shadow-cyan-500/20 hover:border-cyan-500/30 active:scale-95"
-            title={`${config.title} (Pinned). Drag down or Click to restore.`}
-        >
-            <config.icon className="w-3 h-3 text-cyan-500 group-hover:text-cyan-300" />
-            <span className="text-[10px] font-bold text-slate-400 group-hover:text-white uppercase tracking-wider">{config.abbr}</span>
-        </div>
-    );
-};
-
 export const App: React.FC = () => {
     const { mode: layoutMode, activeSheet, setActiveSheet } = useLayout();
     const [fontPx, setFontPx] = useState<number>(getFontSize());
+    // Saved views, presentation mode, history chart settings, How it's built
+    const [historySettings, setHistorySettings] = useState<HistorySettings>(() => { try { return { ...DEFAULT_HISTORY, ...JSON.parse(localStorage.getItem('energy_resilience_history_v1') || '{}') }; } catch { return DEFAULT_HISTORY; } });
+    useEffect(() => { try { localStorage.setItem('energy_resilience_history_v1', JSON.stringify(historySettings)); } catch { /* not remembered */ } }, [historySettings]);
+    const [presenting, setPresenting] = useState(false);
+    const [showBuilt, setShowBuilt] = useState(false);
+    const [views, setViews] = useState<SavedView[]>(listViews);
+    const [viewName, setViewName] = useState('');
+    const [viewMsg, setViewMsg] = useState('');
+    const lastMapView = useRef<{ lat: number; lng: number; zoom: number } | null>(null);
     const changeFont = (dir: 1 | -1) => {
         const i = FONT_SIZES.indexOf(fontPx);
         const next = FONT_SIZES[Math.min(FONT_SIZES.length - 1, Math.max(0, (i < 0 ? 3 : i) + dir))];
@@ -239,7 +206,6 @@ export const App: React.FC = () => {
     // UI Interactions
     const [selectedAsset, setSelectedAsset] = useState<InfrastructureAsset | null>(null);
     const [visibleLayers, setVisibleLayers] = useState<Set<string>>(new Set(['Generation', 'Transmission', 'Interconnector', 'Distribution', 'Retail', 'DNO Regions', 'Power Cuts', 'Generator Outages', 'Flood Warnings', 'Weather Warnings', 'Interconnector Flows', 'Data coverage']));
-    const [selectedPointInfo, setSelectedPointInfo] = useState<TimelineStep | null>(null);
     const [mapCenterOverride, setMapCenterOverride] = useState<{lat: number, lng: number, zoom: number} | null>(null);
     const [customAssetQuery, setCustomAssetQuery] = useState("");
     const [isSearchingAssets, setIsSearchingAssets] = useState(false);
@@ -250,18 +216,7 @@ export const App: React.FC = () => {
     const [historyModalMetric, setHistoryModalMetric] = useState<'demand' | 'frequency' | null>(null);
     
     // Pinning & Window Management State
-    const [pinnedPanels, setPinnedPanels] = useState<Set<string>>(new Set([])); // Init Empty
-    const [panelPositions, setPanelPositions] = useState<Record<string, {x: number, y: number}>>({});
-    const [panelStack, setPanelStack] = useState<string[]>([]); // For Z-Index Management
-    const [layoutKey, setLayoutKey] = useState(0);
-
-    // Panels that start minimized (Data Sync removed)
-    // Panels open at start: Regional Network and Live Outages everywhere; Live Systems too on large screens (>= 1600 px).
-    const INITIAL_MINIMIZED = new Set(['infra', 'engineering_work', 'standby_list', 'chat', 'supply_chain', 'reporting', 'reset_view', 'scenarios_pane', 'data_sync', 'flows',
-        ...(window.innerWidth < 1600 ? ['live_systems'] : [])]);
-    const [minimizedPanels, setMinimizedPanels] = useState<Set<string>>(new Set(INITIAL_MINIMIZED));
     
-    const [showChat, setShowChat] = useState(true); // Always true, managed by minimization
     const [showHelp, setShowHelp] = useState(false);
 
     // Visitor-supplied Gemini key (stored only in their browser)
@@ -278,8 +233,6 @@ export const App: React.FC = () => {
         return false;
     };
     const [helpInitialTab, setHelpInitialTab] = useState<'guide' | 'status' | 'logs'>('guide');
-    const [isInfraCollapsed, setIsInfraCollapsed] = useState(false);
-    const [showGenList, setShowGenList] = useState<string | null>(null);
     
     // Loading State
     const [isLoading, setIsLoading] = useState(false);
@@ -525,53 +478,6 @@ export const App: React.FC = () => {
         return () => { if (timerRef.current) clearTimeout(timerRef.current); };
     }, [isPlaying, activeScenarios, timeline, playbackSpeed]);
 
-    const performDeepUpdate = async () => {
-        setDeepUpdateStatus("Initializing Deep Update...");
-        cancelDeepUpdateRef.current = false;
-        
-        const deepSearchTargets = [
-            "Hyperscale Data Centers",
-            "Major Hospitals",
-            "Industrial Aluminium Smelters",
-            "Gas Compressor Stations",
-            "Strategic Grid Supply Points"
-        ];
-
-        for (const query of deepSearchTargets) {
-            if (cancelDeepUpdateRef.current) break;
-            
-            setDeepUpdateStatus(`Deep Update: Locating ${query}...`);
-            
-            try {
-                // Use existing APIs via the search function
-                const newAssets = await searchInfrastructureAssets(
-                    query, 
-                    activeRegion.lat, 
-                    activeRegion.lng
-                );
-
-                if (newAssets.length > 0 && !cancelDeepUpdateRef.current) {
-                    setAssets(prev => {
-                        const combined = [...prev];
-                        const existingIds = new Set(prev.map(a => a.id));
-                        newAssets.forEach(a => {
-                            if (!existingIds.has(a.id)) combined.push(a);
-                        });
-                        return combined;
-                    });
-                    setVisibleLayers(prev => new Set(prev).add('Custom'));
-                }
-                
-                // Small delay for UI update
-                await new Promise(r => setTimeout(r, 1000));
-            } catch (e: any) {
-                console.warn(`Deep update failed for ${query}`, e);
-            }
-        }
-        
-        setDeepUpdateStatus(null);
-    };
-
     const cancelDeepUpdate = () => {
         cancelDeepUpdateRef.current = true;
         setDeepUpdateStatus(null);
@@ -624,6 +530,7 @@ export const App: React.FC = () => {
 
     const loadedAreasRef = useRef<{ lat: number, lng: number }[]>([]);
     const handleViewChange = useCallback((center: { lat: number, lng: number, zoom: number }) => {
+        lastMapView.current = center;
         setMapCenterOverride(null); 
         lastInteractionTime.current = Date.now();
         lastFetchCenterRef.current = { lat: center.lat, lng: center.lng };
@@ -784,14 +691,9 @@ export const App: React.FC = () => {
         setVisibleLayers(new Set(['Generation', 'Transmission', 'Interconnector', 'Distribution', 'Retail', 'DNO Regions', 'Power Cuts', 'Generator Outages', 'Flood Warnings', 'Weather Warnings', 'Interconnector Flows', 'Data coverage']));
         setActiveRegion(prev => ({...prev}));
         setMapCenterOverride({ lat: activeRegion.lat, lng: activeRegion.lng, zoom: activeRegion.zoom });
-        setMinimizedPanels(new Set(INITIAL_MINIMIZED));
         
         // Reset Layout to Defaults (including sizes and zoom saved in this browser)
         clearSavedLayout();
-        setLayoutKey(prev => prev + 1);
-        setPanelPositions({});
-        setPinnedPanels(new Set([]));
-        setPanelStack([]);
     };
 
     const handleGenerateMoreScenarios = useCallback(async () => {
@@ -875,26 +777,6 @@ export const App: React.FC = () => {
     };
 
 
-    const handleExportReport = () => {
-        const reportData = {
-            title: `Incident Report: ${activeScenarios.length > 1 ? 'Composite Event' : activeScenarios[0].name}`,
-            date: new Date().toISOString(),
-            region: activeRegion.name,
-            scenariosIncluded: activeScenarios.map(s => s.name),
-            impact: {
-                peakConsumers: Math.max(...timeline.map(t => t.consumersOffline)),
-                totalCostMillions: timeline.length > 0 ? timeline[timeline.length - 1].costMillions : 0
-            },
-            narrative: generatedScript
-        };
-        const blob = new Blob([JSON.stringify(reportData, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `incident_report_${Date.now()}.json`;
-        a.click();
-    };
-
     const handleQuickExport = () => {
         if (activeScenarios.length === 0) return;
         const data = {
@@ -910,33 +792,11 @@ export const App: React.FC = () => {
         a.click();
     };
 
-    const handlePrintReport = async () => {
-        if (!generatedScript && activeScenarios.length > 0) {
-            setIsLoading(true);
-            setLoadingMessage("Preparing Executive Summary for Print...");
-            const script = await generateVideoReportScript(activeScenarios[0]);
-            setGeneratedScript(script);
-            setIsLoading(false);
-        }
-        setShowPrintPreview(true);
-    };
-
     const toggleLayer = (category: string) => {
         const next = new Set(visibleLayers);
         if (next.has(category)) next.delete(category);
         else next.add(category);
         setVisibleLayers(next);
-    };
-
-    const isGrowthMode = activeScenarios.some(s => s.category === 'Growth');
-    const metricLabel = isGrowthMode ? "MW added" : "Customers off";
-    const costLabel = isGrowthMode ? "Investment" : "Cost (VoLL)";
-    const statusLabel = isGrowthMode ? "Historical Playback" : "SIMULATING";
-
-    const cycleChartMode = () => {
-        if (chartMode === 'normal') setChartMode('minimal');
-        else if (chartMode === 'minimal') setChartMode('hidden');
-        else setChartMode('normal');
     };
 
     const handleMapAction = useCallback((lat: number, lng: number, zoom: number) => {
@@ -958,15 +818,6 @@ export const App: React.FC = () => {
     }, [generatedScript]);
 
     // Use currentDay data if available, otherwise use last available data (for total cost)
-    const currentStats = useMemo(() => {
-        if (timeline.length === 0) return { consumers: 0, cost: 0 };
-        const index = Math.min(currentDay, timeline.length - 1);
-        return {
-            consumers: timeline[index].consumersOffline,
-            cost: timeline[index].costMillions
-        };
-    }, [timeline, currentDay]);
-
     const isScenarioComplete = useMemo(() => {
         if (timeline.length === 0) return false;
         // Consider complete if we hit end of timeline
@@ -984,6 +835,7 @@ export const App: React.FC = () => {
             case 'live': switchMode('live'); openWin('overview', 'live'); break;
             case 'map': switchMode('live'); openWin('layers', 'live'); break;
             case 'flows': openWin('flows', 'live'); break;
+            case 'history': switchMode('live'); openWin('concentration', 'live'); break;
             case 'library': switchMode('scenarios'); openWin('library', 'scenarios'); break;
             case 'run': {
                 switchMode('scenarios');
@@ -1001,109 +853,6 @@ export const App: React.FC = () => {
 
     // --- Z-INDEX & PINNING LOGIC ---
     
-    const bringToFront = (id: string) => {
-        setPanelStack(prev => {
-            if (prev[prev.length - 1] === id) return prev; // Already on top
-            const newStack = prev.filter(p => p !== id);
-            return [...newStack, id];
-        });
-    };
-
-    const getZIndex = (id: string) => {
-        const index = panelStack.indexOf(id);
-        // Base z-index 30, stack adds on top
-        return index === -1 ? 30 : 30 + index;
-    };
-
-    const pinPanel = (id: string) => {
-        // Space limitation logic
-        const max = window.innerWidth < 768 ? 2 : window.innerWidth < 1280 ? 4 : 8;
-        if (pinnedPanels.size >= max) return; // Prevent if full
-
-        const next = new Set(pinnedPanels);
-        next.add(id);
-        setPinnedPanels(next);
-        
-        // Remove from minimized if present
-        if (minimizedPanels.has(id)) {
-            const min = new Set(minimizedPanels);
-            min.delete(id);
-            setMinimizedPanels(min);
-        }
-    };
-
-    const unpinPanel = (id: string, x?: number, y?: number) => {
-        const next = new Set(pinnedPanels);
-        next.delete(id);
-        setPinnedPanels(next);
-        
-        let finalX = x;
-        let finalY = y;
-        
-        // Find free space heuristic if no explicit position provided (clicked)
-        if (finalX === undefined || finalY === undefined) {
-             if (id === 'reset_view') {
-                 // Center prominent
-                 const w = 250;
-                 const h = 150;
-                 finalX = (window.innerWidth - w) / 2;
-                 finalY = (window.innerHeight - h) / 2;
-             } else {
-                 // Cascade strategy
-                 const offset = (panelStack.length % 10) * 30;
-                 finalX = 100 + offset;
-                 finalY = 150 + offset;
-             }
-        }
-
-        setPanelPositions(prev => ({ ...prev, [id]: { x: finalX!, y: finalY! } }));
-        bringToFront(id); // Ensure restored panel is on top
-    };
-
-    const toggleMinimize = (id: string) => {
-        const next = new Set(minimizedPanels);
-        if (next.has(id)) next.delete(id);
-        else next.add(id);
-        setMinimizedPanels(next);
-        
-        // Also handle legacy state toggles where appropriate
-        if (id === 'chat') setShowChat(false); 
-        // For supply chain, we don't have a specific boolean, the ID controls the panel
-        if (id === 'outage_list') setShowOutageList(false);
-    };
-
-    const restorePanel = (id: string) => {
-        const next = new Set(minimizedPanels);
-        next.delete(id);
-        setMinimizedPanels(next);
-        if (id === 'chat') setShowChat(true);
-        if (id === 'scenario_stats') {
-            setChartMode('normal');
-            setCurrentDay(0);
-            setIsPlaying(false);
-        }
-        
-        // Special centering logic for reset_view
-        if (id === 'reset_view') {
-            const w = 250;
-            const h = 150;
-            const x = (window.innerWidth - w) / 2;
-            const y = (window.innerHeight - h) / 2;
-            setPanelPositions(prev => ({ ...prev, [id]: { x, y } }));
-        }
-        
-        bringToFront(id);
-    };
-
-    const generationListAssets = useMemo<InfrastructureAsset[]>(() => {
-        if (!showGenList) return [];
-        const isRenewable = showGenList === 'Renewables';
-        const targetTypes = isRenewable 
-            ? ['wind_onshore', 'wind_offshore', 'solar', 'hydro', 'biomass']
-            : ['gas', 'coal', 'nuclear'];
-        return assets.filter(a => targetTypes.includes(a.typeId));
-    }, [showGenList, assets]);
-
     const maintenanceAssets = useMemo(() => {
         return assets.filter(a => a.status === 'Maintenance');
     }, [assets]);
@@ -1203,6 +952,49 @@ export const App: React.FC = () => {
     };
     const resetLayout = () => { win.reset(); clearSavedLayout(); setOverlayPanel(null); };
 
+    // ---------- Saved views ----------
+    const currentView = (name: string): SavedView => ({
+        app: 'energy-resilience', kind: 'view', version: 1, name: name || 'My view', savedAt: new Date().toISOString(),
+        mode: appMode, windows: win.snapshot(), layers: [...visibleLayers], map: lastMapView.current || undefined, fontPx, history: historySettings, presenting,
+    });
+    const applyView = (v: SavedView) => {
+        win.restore(v.windows);
+        if (v.mode !== appMode) setAppMode(v.mode);
+        setVisibleLayers(new Set(v.layers));
+        if (v.map) setMapCenterOverride(v.map);
+        if (v.fontPx) { setFontPx(v.fontPx); applyFontSize(v.fontPx); }
+        if (v.history) setHistorySettings(v.history);
+        setPresenting(!!v.presenting);
+        setViewMsg(`Loaded "${v.name}"`);
+    };
+    useEffect(() => {
+        const v = viewFromHash();
+        if (v) { applyView(v); history.replaceState(null, '', location.pathname + location.search); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    const fileInput = useRef<HTMLInputElement>(null);
+
+    // ---------- Presentation mode: map only, big captions, keyboard control ----------
+    useEffect(() => {
+        if (!presenting) return;
+        const onKey = (e: KeyboardEvent) => {
+            if ((e.target as HTMLElement)?.closest?.('input, textarea, select')) return;
+            if (e.key === 'Escape') { setPresenting(false); if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); }
+            if (!timeline.length) return;
+            if (e.key === ' ') { e.preventDefault(); setIsPlaying(p => !p); }
+            if (e.key === 'ArrowRight') setCurrentDay(d => Math.min(timeline.length - 1, d + 1));
+            if (e.key === 'ArrowLeft') setCurrentDay(d => Math.max(0, d - 1));
+            if (e.key === 'Home') setCurrentDay(0);
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [presenting, timeline.length]);
+    const startPresenting = () => {
+        setPresenting(true);
+        setSelectedAsset(null);
+        document.documentElement.requestFullscreen?.().catch(() => {});
+    };
+
     const coverageNow = outageCoverageNow();
     const feedsLive = `${coverageNow.filter(c => c.ok).length} of ${coverageNow.length} networks live · no data: ${coverageNow.filter(c => !c.ok).map(c => c.area.split(',')[0]).join(', ')}`;
     const chatPanel = (
@@ -1265,6 +1057,36 @@ export const App: React.FC = () => {
     const toolsContent = (
         <div className="space-y-3 text-xs">
             <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 space-y-2">
+                <b>Views</b>
+                <p className="text-[11px] text-slate-400">Save the whole set-up: windows and where they are, mode, map layers and position, text size and History chart settings.</p>
+                <div className="flex gap-2">
+                    <label className="flex-1"><span className="sr-only">View name</span>
+                        <input value={viewName} onChange={e => setViewName(e.target.value)} placeholder="Name (e.g. Morning check)" className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-[11px] text-white outline-none" /></label>
+                    <button type="button" onClick={() => { const v = currentView(viewName.trim() || `View ${views.length + 1}`); saveNamedView(v); setViews(listViews()); setViewMsg(`Saved "${v.name}" in this browser`); setViewName(''); }}
+                        className="px-3 py-1.5 rounded-lg bg-cyan-700 hover:bg-cyan-600 text-white font-semibold">Save</button>
+                </div>
+                {views.length > 0 && (
+                    <ul className="space-y-1">
+                        {views.map(v => (
+                            <li key={v.name} className="flex items-center gap-2 bg-slate-950/60 rounded px-2 py-1">
+                                <button type="button" onClick={() => applyView(v)} className="flex-1 text-left truncate text-slate-200 hover:text-white" title={`Saved ${v.savedAt.slice(0, 16).replace('T', ' ')}`}>{v.name}</button>
+                                <button type="button" onClick={() => downloadView(v)} className="text-[10px] text-slate-400 hover:text-white">File</button>
+                                <button type="button" onClick={() => { navigator.clipboard?.writeText(viewLink(v)).then(() => setViewMsg('Link copied')).catch(() => setViewMsg('Could not copy the link')); }} className="text-[10px] text-slate-400 hover:text-white">Link</button>
+                                <button type="button" onClick={() => { deleteNamedView(v.name); setViews(listViews()); }} aria-label={`Delete ${v.name}`} className="text-[10px] text-slate-500 hover:text-red-300">✕</button>
+                            </li>
+                        ))}
+                    </ul>
+                )}
+                <div className="grid grid-cols-2 gap-2">
+                    <button type="button" onClick={() => downloadView(currentView(viewName.trim() || 'My view'))} className="py-1.5 rounded-lg border border-slate-700 hover:border-slate-500">Save to file</button>
+                    <button type="button" onClick={() => fileInput.current?.click()} className="py-1.5 rounded-lg border border-slate-700 hover:border-slate-500">Load from file</button>
+                    <button type="button" onClick={() => { navigator.clipboard?.writeText(viewLink(currentView(viewName.trim() || 'Shared view'))).then(() => setViewMsg('Link copied: it opens this exact view')).catch(() => setViewMsg('Could not copy the link')); }} className="py-1.5 rounded-lg border border-slate-700 hover:border-slate-500">Copy link</button>
+                    <button type="button" onClick={startPresenting} className="py-1.5 rounded-lg border border-red-800 text-red-200 hover:border-red-600">Present</button>
+                </div>
+                <input ref={fileInput} type="file" accept="application/json,.json" className="hidden" onChange={async e => { const f = e.target.files?.[0]; e.target.value = ''; if (!f) return; const v = await readViewFile(f); if (v) applyView(v); else setViewMsg('That file is not a saved view from this app'); }} />
+                {viewMsg && <p className="text-[11px] text-cyan-300" role="status">{viewMsg}</p>}
+            </div>
+            <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 space-y-2">
                 <div className="flex justify-between items-center"><b>Data refresh</b>
                     <button type="button" onClick={() => setAllowBackgroundUpdates(!allowBackgroundUpdates)} className={`text-[11px] font-bold px-2 py-1 rounded border ${allowBackgroundUpdates ? 'bg-green-900/30 text-green-400 border-green-800' : 'bg-red-900/30 text-red-400 border-red-800'}`}>{allowBackgroundUpdates ? 'LIVE' : 'PAUSED'}</button>
                 </div>
@@ -1303,6 +1125,10 @@ export const App: React.FC = () => {
           content: <OutagesPanel outages={liveOutages} generatorOutages={generatorOutages} onFullList={() => setShowOutageList(true)} onGoTo={(lat, lng) => setMapCenterOverride({ lat, lng, zoom: 11 })} /> },
         { id: 'systems', title: 'Notices, gas and weather', short: 'Systems', colour: '#06b6d4', icon: CloudIcon, modes: ['live'], width: 320,
           content: <LiveSystemsPanel flows={icFlows} gas={gas} weather={weatherWarnings} floods={floods} generatorOutages={generatorOutages} systemWarnings={systemWarnings} updated={liveSystemsUpdated} /> },
+        { id: 'history', title: 'History (data lake)', short: 'History', colour: '#38bdf8', icon: ClockIcon, modes: ['live'], width: 560,
+          content: <React.Suspense fallback={<div className="text-xs text-slate-400">Loading…</div>}><HistoryPanel settings={historySettings} onChange={setHistorySettings} /></React.Suspense> },
+        { id: 'concentration', title: 'System concentration', short: 'Concentration', colour: '#a78bfa', icon: ScaleIcon, modes: ['live'], width: 420,
+          content: <React.Suspense fallback={<div className="text-xs text-slate-400">Loading…</div>}><ConcentrationPanel flows={energyFlows} mix={generationMix} demandMW={nesoData.demand} onTest={id => { const sc = scenarios.find(x => x.id === id); if (sc) runScenarios([sc]); }} /></React.Suspense> },
         { id: 'library', title: 'Scenario library', short: 'Library', colour: '#ef4444', icon: ListBulletIcon, modes: ['scenarios'], width: 420,
           content: <ScenarioLibraryPanel scenarios={scenarios} running={activeScenarios} onRun={runScenarios} onManage={() => setShowScenarioManager(true)} onPlace={startPlacing} onClear={handleStopSimulation} onAdopt={adopt} onDiscard={discard} onAskAi={handleGenerateMoreScenarios} aiOn={aiEnabled} /> },
         { id: 'results', title: activeScenarios.length > 1 ? 'Results: composite event' : 'Results', short: 'Results', colour: '#dc2626', icon: ChartBarIcon, modes: ['scenarios'], width: 440,
@@ -1457,7 +1283,7 @@ export const App: React.FC = () => {
                 <div className="hidden"><UpdateTimer onTrigger={performUnifiedUpdate} isPaused={!allowBackgroundUpdates || isPlaying} intervalMinutes={updateInterval} /></div>
 
                 {/* ---------- Top bar ---------- */}
-                <header className="flex-none h-14 bg-slate-950 border-b border-slate-800 flex items-center gap-2 lg:gap-3 px-2 lg:px-4 z-50">
+                {!presenting && <header className="flex-none h-14 bg-slate-950 border-b border-slate-800 flex items-center gap-2 lg:gap-3 px-2 lg:px-4 z-50">
                     <div className="flex items-center gap-2 shrink-0">
                         <BoltIcon className="w-6 h-6 text-yellow-500 shrink-0" />
                         <div className="hidden xl:block">
@@ -1507,12 +1333,14 @@ export const App: React.FC = () => {
                         <button type="button" onClick={() => changeFont(-1)} className="px-2 py-1.5 hover:bg-slate-800 hover:text-white" aria-label="Smaller text">A−</button>
                         <button type="button" onClick={() => changeFont(1)} className="px-2 py-1.5 hover:bg-slate-800 hover:text-white border-l border-slate-800" aria-label="Larger text">A+</button>
                     </div>
+                    <button type="button" onClick={startPresenting} title="Present: map only, big captions (Esc to leave)" aria-label="Present" className="hidden md:flex text-slate-400 hover:text-white shrink-0 p-1"><PresentationChartLineIcon className="w-6 h-6" /></button>
+                    <button type="button" onClick={() => setShowBuilt(true)} title="How it's built" aria-label="How it's built" className="hidden md:flex text-slate-400 hover:text-white shrink-0 p-1"><CubeTransparentIcon className="w-6 h-6" /></button>
                     <button type="button" onClick={() => { setHelpInitialTab('guide'); setShowHelp(true); }} aria-label="Help" className="text-slate-400 hover:text-white shrink-0 p-1"><QuestionMarkCircleIcon className="w-6 h-6" /></button>
-                </header>
+                </header>}
 
                 {/* ---------- Body: rail | map (+ timeline) | side panel ---------- */}
-                <div className={`flex-1 flex min-h-0 relative ${layoutMode === 'phone' ? 'pb-14' : ''}`}>
-                    {layoutMode !== 'phone' && (
+                <div className={`flex-1 flex min-h-0 relative ${layoutMode === 'phone' && !presenting ? 'pb-14' : ''}`}>
+                    {layoutMode !== 'phone' && !presenting && (
                         <ToolRail defs={windowDefs} mode={appMode} win={win} onReset={resetLayout}
                             overlayPanel={layoutMode === 'tablet'} overlayOpen={overlayPanel} onOpenOverlay={id => { win.setActive(appMode, id); setOverlayPanel(overlayPanel === id ? null : id); }} />
                     )}
@@ -1549,10 +1377,16 @@ export const App: React.FC = () => {
                                     onFootprint={setFootprintInfo}
                                 />
                             </div>
-                            <button type="button" onClick={handleHomeView} title="Reset map view" aria-label="Reset map view"
+                            {!presenting && <button type="button" onClick={handleHomeView} title="Reset map view" aria-label="Reset map view"
                                 className="absolute top-3 left-3 z-10 bg-slate-950/90 border border-slate-700 w-10 h-10 rounded-lg shadow-xl hover:bg-slate-800 text-slate-300 hover:text-white flex items-center justify-center">
                                 <MapIcon className="w-5 h-5" />
-                            </button>
+                            </button>}
+                            {presenting && (
+                                <div className="absolute top-3 right-3 z-30 flex gap-2">
+                                    {appMode === 'live' && <span className="bg-slate-950/85 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 font-mono">{nesoData.demand ? `${(nesoData.demand / 1000).toFixed(1)} GW` : '–'} · {nesoData.demand ? `${nesoData.frequency.toFixed(2)} Hz` : '–'} · {liveOutages.filter(o => !/^planned/i.test(o.description || '')).reduce((a, o) => a + (o.consumersAffected || 0), 0).toLocaleString()} off now</span>}
+                                    <button type="button" onClick={() => { setPresenting(false); if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); }} className="bg-slate-950/85 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 hover:text-white" title="Leave presentation (Esc). Space: play or pause; arrows: step">Exit presentation</button>
+                                </div>
+                            )}
                             {placing && (
                                 <div role="status" className="absolute top-3 left-1/2 -translate-x-1/2 z-30 max-w-[92%] bg-amber-950/95 border border-amber-500 text-amber-100 rounded-xl shadow-2xl px-4 py-2.5 text-xs flex items-center gap-3">
                                     <span><b>Click the map</b> to choose where “{placing.name}” happens. The location is yours to choose and is illustrative.</span>
@@ -1560,10 +1394,10 @@ export const App: React.FC = () => {
                                 </div>
                             )}
                             {!placing && appMode === 'scenarios' && activeScenarios.length > 0 && timeline.length > 0 && (
-                                <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[15] w-[min(640px,calc(100%-7rem))] pointer-events-none flex flex-col items-center gap-1">
+                                <div className={`absolute top-3 left-1/2 -translate-x-1/2 z-[15] ${presenting ? 'w-[min(900px,calc(100%-14rem))]' : 'w-[min(640px,calc(100%-7rem))]'} pointer-events-none flex flex-col items-center gap-1`}>
                                     <div key={caption?.text || 'none'} className="er-caption w-full bg-slate-950/90 border border-red-900/70 rounded-xl shadow-2xl px-4 py-2 text-center">
-                                        <div className="text-[10px] font-bold tracking-wider text-red-300">{timeline[currentDay]?.label || ''} · {(timeline[currentDay]?.consumersOffline || 0).toLocaleString()} customers off</div>
-                                        {caption && <div className="text-xs sm:text-sm text-slate-100 leading-snug">{caption.text}</div>}
+                                        <div className={`${presenting ? 'text-sm' : 'text-[10px]'} font-bold tracking-wider text-red-300`}>{timeline[currentDay]?.label || ''} · {(timeline[currentDay]?.consumersOffline || 0).toLocaleString()} customers off</div>
+                                        {caption && <div className={`${presenting ? 'text-lg sm:text-2xl' : 'text-xs sm:text-sm'} text-slate-100 leading-snug`}>{caption.text}</div>}
                                     </div>
                                     <div className="text-[10px] text-slate-400 bg-slate-950/80 rounded px-2 py-0.5 text-center">Modelled and illustrative: shaded areas are not a forecast of where cuts would fall</div>
                                     {!!hiddenForScenario.current?.length && hiddenForScenario.current.some(l => !visibleLayers.has(l)) && (
@@ -1575,15 +1409,15 @@ export const App: React.FC = () => {
                                 <AssetDetails asset={selectedAsset} regionName={activeRegion.name} onClose={() => setSelectedAsset(null)} />
                             )}
                             {/* Popped-out windows float over the map only, never over the top bar or timeline */}
-                            {layoutMode !== 'phone' && (
+                            {layoutMode !== 'phone' && !presenting && (
                                 <div className="absolute inset-0 pointer-events-none z-20">
                                     {windowDefs.filter(d => d.modes.includes(appMode) && win.stateOf(d.id) === 'floating').map(d => (
-                                        <FloatingWindow key={d.id} def={d} win={win} container={mapAreaRef} />
+                                        <FloatingWindow key={`${d.id}_${win.version}`} def={d} win={win} container={mapAreaRef} />
                                     ))}
                                 </div>
                             )}
-                            {layoutMode !== 'phone' && <MinimisedTray defs={windowDefs} mode={appMode} win={win} />}
-                            {layoutMode === 'tablet' && overlayPanel && (
+                            {layoutMode !== 'phone' && !presenting && <MinimisedTray defs={windowDefs} mode={appMode} win={win} />}
+                            {layoutMode === 'tablet' && overlayPanel && !presenting && (
                                 <SidePanel defs={windowDefs} mode={appMode} win={win} overlay onClose={() => setOverlayPanel(null)} />
                             )}
                         </div>
@@ -1604,10 +1438,10 @@ export const App: React.FC = () => {
                             </div>
                         )}
                     </div>
-                    {layoutMode === 'desktop' && <SidePanel defs={windowDefs} mode={appMode} win={win} />}
+                    {layoutMode === 'desktop' && !presenting && <SidePanel defs={windowDefs} mode={appMode} win={win} />}
                 </div>
 
-                {layoutMode === 'phone' && (
+                {layoutMode === 'phone' && !presenting && (
                     <>
                         <PhoneSheet def={windowDefs.find(d => d.id === activeSheet && d.modes.includes(appMode)) || null} onClose={() => setActiveSheet(null)} />
                         <PhoneTabs defs={windowDefs} mode={appMode} active={activeSheet} onPick={setActiveSheet} />
@@ -1624,6 +1458,7 @@ export const App: React.FC = () => {
             </div>
 
             {/* Modals and Overlays */}
+            {showBuilt && <React.Suspense fallback={null}><HowItsBuilt onClose={() => setShowBuilt(false)} /></React.Suspense>}
             {isTourActive && <TourGuide onClose={() => setIsTourActive(false)} onStepChange={handleTourStep} />}
             {showScenarioManager && (
                 <ScenarioManager 

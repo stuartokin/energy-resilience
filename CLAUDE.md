@@ -13,6 +13,12 @@ A public, personal project by Stuart Okin: a live picture of the GB energy syste
 - **Scenario map footprints** (`FOOTPRINTS` in `content/scenarios.ts`, drawn by `services/footprint.ts`) are illustrative: national, regions, `placeable`, or a point based on a real past event, never a site picked as a target. `EVENTS` captions only state what the cited source says. Every shaded area must stay labelled as modelled and illustrative. DNO line data is used only from datasets under an open licence; skip anything "Shared".
 - Don't use restricted data (e.g. ENWL "Shared" data) or anything not openly licensed for public display.
 
+- **System-level only.** Never rank individual sites by how much their loss would hurt (aggregation risk). Concentration views stay at route, link, fuel and weather level.
+- **History** (Worker → Workers KV) stores public, aggregate data only; power cuts as rounded location, customers and times.
+
+## Start here in a new conversation
+Read `docs/HANDOVER.md`: purpose, architecture, decisions, known gaps, release checklist and roadmap. Update it with every release.
+
 ## Documentation is part of every change
 - Bump `APP_VERSION` in `constants.ts`.
 - Add an entry at the top of `content/changelog.ts` **and** `CHANGELOG.md`.

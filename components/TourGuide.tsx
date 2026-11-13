@@ -17,6 +17,8 @@ export const TOUR_STEPS: { key: string; title: string; text: string }[] = [
       text: 'Zoom in for substations, lines, solar farms and batteries. Click a substation to see the lines and generators connected to it. Layers turns things on and off, including power cuts and generator outages.' },
     { key: 'flows', title: 'Energy flows',
       text: 'Electricity and gas coming into and out of GB, by route, on one GW scale. The moving dashes on the map show the direction of flow.' },
+    { key: 'history', title: 'History and concentration',
+      text: 'History charts what the system did over days and weeks, from snapshots the site takes every 15 minutes, including power cuts that have since been fixed. Concentration shows how much supply depends right now on one gas route, one link, one fuel or the weather.' },
     { key: 'library', title: 'Scenarios: choose',
       text: 'Pick one or more risks from the Library. "Why these numbers?" shows the real event and sources behind each one. Local events can be placed anywhere with "Place it on the map".' },
     { key: 'run', title: 'Scenarios: watch it play',
@@ -28,7 +30,7 @@ export const TOUR_STEPS: { key: string; title: string; text: string }[] = [
     { key: 'report', title: 'Reports and video briefing',
       text: 'Create report builds a printable live or scenario report (save it as a PDF). Video briefing narrates a running scenario.' },
     { key: 'help', title: 'Help and System Status',
-      text: 'Help has the map legend, the scenario model with every value and source, all data sources and licences, and System Status: which feeds are working and where there are gaps.' },
+      text: 'Help has the map legend, the scenario model with every value and source, all data sources and licences, and System Status. "How it\'s built" (cube icon) shows how the parts fit together. Tools → Views saves your whole set-up to a file or link, and Present gives a full-screen map for talks.' },
 ];
 
 const TourGuide: React.FC<TourGuideProps> = ({ onClose, onStepChange }) => {

@@ -46,6 +46,11 @@ A live picture of the GB energy system - infrastructure, power cuts, generator o
 | `components/TourGuide.tsx` | The guided tour (steps and text). Each step opens the part of the app it describes (`handleTourStep` in App.tsx). |
 | `content/assumptions.ts` | **Every value the impact model uses**, with source or reasoning, plus reference events. Shown in Help → Scenario model. |
 | `services/impactModel.ts` | Turns a scenario into customers off supply over time, energy not supplied and cost (VoLL). No AI, no random numbers. |
+| `docs/HANDOVER.md` | **Start here in a new conversation**: what the app is, rules, architecture, decisions, gaps, roadmap. |
+| `content/architecture.ts`, `components/HowItsBuilt.tsx` | The "How it's built" page (cube icon in the top bar): clickable architecture with live status, data journeys, scenario-engine playground, map layers. |
+| `services/history.ts`, `components/panels/HistoryPanel.tsx` | History window: charts from the snapshots the Worker stores every 15 minutes. |
+| `components/panels/ConcentrationPanel.tsx` | System concentration: dependence on one gas route, link, country, fuel or the weather (system-level only). |
+| `services/views.ts` | Saved views: whole screen set-up to a name, a file or a link. |
 | `services/footprint.ts` | Where a running scenario shows on the map: Grid Supply Point areas, red haze then lights out, patterns, captions, routes cut. Illustrative, and labelled so. |
 | `scripts/build-network-extras.mjs` | Weekly, needs GDAL: NESO Grid Supply Point areas → `data/gsp-areas.json`; network operators' open-licence 33 kV+ lines → `network/dno-lines.pmtiles` (+ `data/dno-lines-sources.json` listing what was used). |
 | `services/flows.ts`, `components/EnergyFlowsPanel.tsx` | Electricity and gas flowing into and out of GB, by route, on one GW scale; the map arrows. |
@@ -211,6 +216,7 @@ jobs:
 5. Put the address in `config.ts` (`OUTAGE_WORKER_URL`).
 6. SP Energy Networks: create a free account and API key at spenergynetworks.opendatasoft.com, then Worker → **Settings → Variables and Secrets → Add → Secret** named `SPEN_API_KEY` → **Deploy**.
 7. **Whenever `worker/outages-worker.js` changes** (the changelog says so), repeat step 3: Edit code → paste the new file → Deploy.
+8. **History (free):** Storage & Databases → **KV** → Create a namespace `energy-lake`. Then Worker → **Settings → Bindings → Add → KV namespace**: variable name `LAKE`, namespace `energy-lake`. Then Worker → **Settings → Triggers → Cron Triggers → Add** `*/15 * * * *`. Check `https://energy-outages.<you>.workers.dev/history` lists today's date after 15 minutes.
 
 Electricity North West's outage data is classified "Shared" (public bodies only, restricted licence), so it is deliberately not used. The Worker caches for 2 minutes; Cloudflare's free plan allows 100,000 requests a day.
 </details>
@@ -255,4 +261,5 @@ Licences and credits: [ATTRIBUTION.md](ATTRIBUTION.md).
 2. ~~Phase 2 - movable, resizable, text-size adjustable panels; layouts for every screen; new icon set~~ (v3.2.0)
 3. ~~Phase 3 part 1 - MapLibre map with weekly tiles of every UK energy asset; substation connections~~ (v3.3.0). ~~Part 2 - which generators connect to which substation~~ (v3.4.0)
 4. ~~Phase 4 - a curated library of realistic risk scenarios in every category, with a transparent, sourced impact model~~ (v3.5.0). Also live energy flows and built-in analyst questions
-5. Phase 5 - weekly research agents that propose new scenarios and sources for review
+5. ~~Scenario footprints, playback and AI proposals~~ (v4.1–4.2); ~~history, concentration, views, presentation, How it's built~~ (v4.3)
+6. Phase 5 - weekly research agents that propose new scenarios and sources for review (ideas: `docs/HANDOVER.md` section 10)

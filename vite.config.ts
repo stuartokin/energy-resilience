@@ -12,6 +12,19 @@ export default defineConfig({
         host: '0.0.0.0',
     },
     plugins: [react()],
+    // Split the big libraries into their own files so the browser can cache them between releases
+    build: {
+        chunkSizeWarningLimit: 1100,
+        rollupOptions: {
+            output: {
+                manualChunks: {
+                    map: ['maplibre-gl', 'pmtiles'],
+                    charts: ['recharts'],
+                    ai: ['@google/genai'],
+                },
+            },
+        },
+    },
     // Build stamp shown in Help (GITHUB_SHA is set automatically in GitHub Actions)
     define: {
         __BUILD_DATE__: JSON.stringify(new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC'),

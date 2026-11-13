@@ -202,15 +202,6 @@ export interface SaveData {
     cachedOutages?: OutageEvent[];
 }
 
-export interface SupplyChainInsight {
-    supplier: string;
-    techDomain: 'SCADA' | 'DCS' | 'Industrial Automation' | 'OT Security';
-    operatorConnection: string;
-    potentialAssets: string[];
-    evidence: string;
-    probability: 'High' | 'Medium' | 'Low';
-    sources: string[];
-}
 
 export interface LogEntry {
     timestamp: number;

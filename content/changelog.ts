@@ -6,6 +6,19 @@ export interface ChangeEntry { version: string; date: string; title: string; cha
 
 export const CHANGELOG: ChangeEntry[] = [
     {
+        version: '4.3.0',
+        date: '2026-11-14',
+        title: 'History, concentration, saved views, presentation mode and "How it\'s built"',
+        changes: [
+            'History (new window): the site now keeps its own record, with a snapshot every 15 minutes of demand, frequency, generation, imports, gas, power cuts from all five open network feeds, and warnings. Charts include power cuts by network, the worst moment each day, a wind heatmap, minutes outside normal frequency limits, gas supply and linepack, and concentration over time. Live power-cut feeds vanish once a cut is fixed, so this history isn\'t kept anywhere else.',
+            'System concentration (new window): how much of today\'s supply depends on one gas route, one interconnector, one country, one fuel or the weather. Each measure links to the scenario that tests it. It is system-level only: no ranking of individual sites.',
+            'Views (Tools): save the whole set-up (windows and positions, mode, layers, map position, text size, History chart settings) by name, to a file, or as a link that opens the same view.',
+            'Present (top bar): full-screen map with large captions. Space plays or pauses, the arrow keys step, and Esc leaves.',
+            '"How it\'s built" (cube icon): an interactive guide with a clickable architecture map showing live status, worked examples of where a number comes from, a scenario-engine playground, the map layer stack, how the history is kept, the principles and the release timeline.',
+            'Tidy-up: old panel code removed and the app split into smaller files, so it loads faster.',
+        ],
+    },
+    {
         version: '4.2.0',
         date: '2026-11-13',
         title: 'Scenario playback, AI proposals and a new tour',

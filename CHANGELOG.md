@@ -3,6 +3,16 @@
 Newest first. Mirrored in the app under **Help → What's new** (`content/changelog.ts`).
 Versioning: MAJOR = big change in what the app is; MINOR = new features or data sources; PATCH = fixes.
 
+## 4.3.0 - 2026-11-14 - History (data lake), concentration, views, presentation, How it's built
+- **Worker (re-paste it):** `scheduled()` takes a snapshot every 15 minutes into Workers KV (binding `LAKE`, Cron `*/15 * * * *`). Adds `/history` and `/history/day?d=YYYY-MM-DD`. Collects UKPN and NPg power cuts too (summary only, no personal data). Set-up steps are at the top of the file.
+- `services/history.ts`, `components/panels/HistoryPanel.tsx`: History window (8 charts, range Today/7/30/90 days). `services/flows.ts` exports `GAS_ROUTES`.
+- `components/panels/ConcentrationPanel.tsx`: system-level concentration measures with links to scenarios.
+- `services/views.ts`: views (named, file, `#view=` link). `useWindows` gains `snapshot`, `restore` and `version`.
+- Presentation mode in App.tsx (hides header, rail, panels; big captions; keyboard).
+- `components/HowItsBuilt.tsx` + `content/architecture.ts`; `docs/HANDOVER.md` for new conversations.
+- Tidy: unused state and handlers removed from App.tsx; `vite.config.ts` splits map, charts and AI libraries into chunks; History, Concentration and How it's built load on demand.
+- **Delete in GitHub:** `components/DraggablePanel.tsx`, `components/GenerationListPanel.tsx`, `components/SupplyChainModal.tsx`, `components/SystemStatusModal.tsx`, `components/App.tsx` (unused placeholder).
+
 ## 4.2.0 - 2026-11-13 - Playback with lead-in, red haze then black, AI proposals, new tour
 - `services/impactModel.ts`: timelines start with a lead-in of normal running (negative `hours`, at least 4 steps, about an eighth of the run); `customersOffAt` is 0 before the event. Step `day` is the array index.
 - Playback (App.tsx): time per step is weighted by change in customers off and by captions (about 22 s at 1x); follows seeks while playing.

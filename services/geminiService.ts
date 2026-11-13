@@ -108,6 +108,7 @@ export const getApiSystemStatus = () => {
         ...noFeedRows(),
         overpassRow(),
         row("Network operator lines (33 kV and above)", 'dnolines', "Built weekly from DNO open data"),
+        row("History (data lake)", 'history', "Snapshots every 15 minutes by the Worker; checked when History opens"),
         row("Grid Supply Point areas (scenario map)", 'gsp', "NESO open boundaries, built weekly; network-operator areas used until built"),
         row("Esri Dark Gray Canvas", 'basemap', "Map Tiles", 'Public'),
         radarRow(),

@@ -45,7 +45,7 @@ const ELEC_PATHS: Record<string, { from: string, path: [number, number][] }> = {
 
 // ---------- Gas: entry points grouped into routes ----------
 interface GasRoute { id: string; name: string; from: string; landing: string; group: FlowGroup; entries?: string[]; terminal?: string; exportName?: string; path: [number, number][]; note?: string; }
-const GAS_ROUTES: GasRoute[] = [
+export const GAS_ROUTES: GasRoute[] = [
     { id: 'langeled', name: 'Langeled', from: 'Norway (Nyhamna, via Sleipner)', landing: 'Easington', group: 'Norway pipeline', entries: ['EASINGTON LANGELED'],
       path: [[6.95, 62.85], [3.50, 60.50], [1.91, 58.37], [1.00, 55.50], [0.11, 53.66]] },
     { id: 'stfergus', name: 'St Fergus', from: 'Northern North Sea (UK and Norwegian fields)', landing: 'St Fergus', group: 'UK & Norway (mixed)', entries: ['ST FERGUS MOBIL', 'ST FERGUS NSMP', 'ST FERGUS SHELL'],
