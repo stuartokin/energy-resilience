@@ -5,9 +5,7 @@ import { APP_VERSION, BUILD_DATE, BUILD_COMMIT, ASSET_TYPES } from '../constants
 import { CHANGELOG } from '../content/changelog';
 import { iconSvg, powerCutSvg, LINE_LEGEND } from './icons';
 import { DATA_SOURCES } from '../content/sources';
-import { ASSUMPTIONS, REFERENCE_EVENTS } from '../content/assumptions';
-import { methodNote } from '../services/impactModel';
-import { GAS_CV_NOTE } from '../services/flows';
+import { ScenarioModelPanel } from './panels/ScenarioPanels';
 import { getApiSystemStatus, getSystemLogs } from '../services/geminiService';
 
 interface HelpModalProps {
@@ -111,9 +109,12 @@ const HelpModal: React.FC<HelpModalProps> = ({ onClose, onLaunchTour, initialTab
                                 </div>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                                     {[
-                                        ['Map and layers', 'text-cyan-400', 'Use the filter (funnel) to choose layers: generation, networks, DNO areas, power cuts, generator outages, interconnector flows, flood and weather warnings. Click anything for details and its source.'],
+                                        ['Two modes', 'text-cyan-400', 'Live (top bar) shows how the energy system is running now and over time. Scenarios lets you choose one or more risks from the Library, run them together and see the impact.'],
+                                        ['Windows', 'text-slate-200', 'Every window opens as a tab in the right-hand panel. Use the pop-out button in its header to float it over the map; drag it by its header, resize it from the corner, change its text size, minimise it, or dock it back. Reset layout (left bar) puts everything back.'],
+                                        ['Reports and briefings', 'text-amber-400', 'Create report (top bar) makes a printable report of the live system or the scenario run: pick sections, add a byline, and save it as a PDF from the print dialog. Video briefing makes an AI-narrated briefing on the running scenario.'],
+                                        ['Map and layers', 'text-cyan-400', 'Open Layers to choose what the map shows: generation, networks, operator areas, energy flows, generator outages, flood and weather warnings. Click anything for details and its source.'],
                                         ['Live data', 'text-green-400', 'Demand, frequency and the mix refresh every minute; outages, flows and warnings every 5 minutes. If a feed fails, the last real value is shown marked "est." - nothing is made up.'],
-                                        ['History', 'text-yellow-400', 'Click Grid Demand or Frequency for real Elexon history (24 hours to a year for demand; 24 hours or 7 days for frequency).'],
+                                        ['History', 'text-yellow-400', 'Click Demand or Frequency (Overview) for real Elexon history (24 hours to a year for demand; 24 hours or 7 days for frequency).'],
                                         ['Scenarios', 'text-red-400', 'Run "what if" scenarios to see illustrative impacts over time. Scenario figures are modelled assumptions, not forecasts.'],
                                         ['AI features (optional)', 'text-purple-400', 'Add your own free Gemini key (AI: Off, top bar) for the analyst, AI summaries and AI scenarios. AI output comes from web search and is not verified.'],
                                         ['System status', 'text-slate-300', 'The green dot by the region shows whether every data source answered. Details are under System Status.'],
@@ -184,40 +185,9 @@ const HelpModal: React.FC<HelpModalProps> = ({ onClose, onLaunchTour, initialTab
                         )}
 
                         {activeTab === 'model' && (
-                            <div className="animate-fadeIn space-y-5 text-sm">
-                                <div>
-                                    <h3 className="text-xl font-bold text-white mb-2 border-b border-slate-700 pb-2">How scenario impacts are worked out</h3>
-                                    <p className="text-slate-300 mb-2">Scenario figures come from a simple, transparent model in the app, not from AI and not from random numbers. Each library scenario says how its numbers were reached ("Why these numbers?" in the Scenario Manager): <b className="text-green-300">Sourced</b> means taken from a real event, <b className="text-cyan-300">Scaled</b> means scaled from a real event, and <b className="text-amber-300">Illustrative</b> means a labelled assumption.</p>
-                                    <p className="text-slate-400">{methodNote}</p>
-                                    <p className="text-slate-400 mt-2">Energy flows: {GAS_CV_NOTE}</p>
-                                </div>
-                                <div>
-                                    <h4 className="font-bold text-slate-200 mb-2">Values used</h4>
-                                    <div className="space-y-2">
-                                        {Object.values(ASSUMPTIONS).map(a => (
-                                            <div key={a.id} className="bg-slate-950/50 p-3 rounded border border-slate-800">
-                                                <div className="flex justify-between gap-3 flex-wrap">
-                                                    <span className="font-bold text-white">{a.label}</span>
-                                                    <span className="font-mono text-cyan-300">{a.value.toLocaleString()} {a.unit} <span className={`ml-2 text-[10px] px-1.5 rounded border ${a.kind === 'sourced' ? 'text-green-300 border-green-800' : 'text-amber-300 border-amber-800'}`}>{a.kind === 'sourced' ? 'Sourced' : 'Assumption'}</span></span>
-                                                </div>
-                                                <div className="text-slate-400 text-xs mt-1">{a.basis}</div>
-                                                {a.source && <a href={a.source.url} target="_blank" rel="noopener noreferrer" className="text-xs text-cyan-400 hover:underline">{a.source.title}</a>}
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                                <div>
-                                    <h4 className="font-bold text-slate-200 mb-2">Real events used as reference points</h4>
-                                    <div className="space-y-2">
-                                        {REFERENCE_EVENTS.map(e => (
-                                            <div key={e.name} className="bg-slate-950/50 p-3 rounded border border-slate-800">
-                                                <div className="font-bold text-white">{e.name} <span className="text-slate-500 font-normal">· {e.date}</span></div>
-                                                <div className="text-slate-400 text-xs">{e.summary}</div>
-                                                <a href={e.source.url} target="_blank" rel="noopener noreferrer" className="text-xs text-cyan-400 hover:underline">{e.source.title}</a>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
+                            <div className="animate-fadeIn">
+                                <h3 className="text-xl font-bold text-white mb-3 border-b border-slate-700 pb-2">How scenario impacts are worked out</h3>
+                                <ScenarioModelPanel />
                             </div>
                         )}
 

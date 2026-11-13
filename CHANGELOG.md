@@ -3,6 +3,13 @@
 Newest first. Mirrored in the app under **Help → What's new** (`content/changelog.ts`).
 Versioning: MAJOR = big change in what the app is; MINOR = new features or data sources; PATCH = fixes.
 
+## 4.0.0 - 2026-11-13 - New layout: modes, standard windows, report builder
+- `components/shell/windows.tsx`: window manager (docked / floating / minimised / closed), side panel with tabs, floating windows (drag, resize, text size), minimised tray, tool rail, phone tab bar and sheet. Layout saved in localStorage (`energy_resilience_windows_v1`).
+- `components/panels/LivePanels.tsx` (Overview, Electricity, Outages) and `components/panels/ScenarioPanels.tsx` (Library, Results, Model; Model also used in Help).
+- `components/ReportBuilder.tsx`: printable live or scenario report, A4 print CSS, map snapshot (MapLibre `preserveDrawingBuffer`), 24 h demand chart, optional AI summary/mitigations via `generateReportText`.
+- App.tsx: old floating panels, dock and pinning replaced by the new shell; Live | Scenarios mode switch; timeline under the map; Video briefing, Analyst AI and Create report in the top bar.
+- ChatPanel `embedded` prop; video script now given each scenario's reasoning.
+
 ## 3.6.0 - 2026-11-12 - Planning database sites and inferred connections
 - `build-connections.mjs` adds REPD (DESNZ, OGL): latest quarterly CSV found via the gov.uk content API; operational, under construction and awaiting construction, 1 MW+, GB only; sites within 1 km of a same-fuel ECR site dropped. Stored as `repd` in `connections.json`.
 - Map: `repd` layer; popups for REPD sites and for OSM plants/generators without a TEC match infer the likely substation (nearest OSM substation at a voltage suited to MW, labelled as inferred, dashed line).

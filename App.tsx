@@ -32,6 +32,10 @@ import GridHistoryModal from './components/GridHistoryModal';
 import AiKeyModal from './components/AiKeyModal';
 import LiveSystemsPanel from './components/LiveSystemsPanel';
 import EnergyFlowsPanel from './components/EnergyFlowsPanel';
+import ReportBuilder from './components/ReportBuilder';
+import { useWindows, AppMode, WinDef, FloatingWindow, SidePanel, MinimisedTray, ToolRail, PhoneSheet, PhoneTabs } from './components/shell/windows';
+import { OverviewPanel, ElectricityPanel, OutagesPanel } from './components/panels/LivePanels';
+import { ScenarioLibraryPanel, ResultsPanel, ScenarioModelPanel } from './components/panels/ScenarioPanels';
 import { buildFlows } from './services/flows';
 import { buildTimeline, methodNote } from './services/impactModel';
 import { fetchInterconnectorFlows, fetchRegionalCarbon, fetchFloodWarnings, fetchGasSnapshot, fetchWeatherWarnings, fetchSystemWarnings, InterconnectorFlow, RegionalCarbon, FloodWarning, GasSnapshot, WeatherWarning, SystemWarning } from './services/liveSystems';
@@ -1153,18 +1157,169 @@ export const App: React.FC = () => {
         return assets.filter(a => a.liveStatus === 'standby');
     }, [assets]);
 
+    // ================= Layout: modes and windows (v4) =================
+    const [appMode, setAppMode] = useState<AppMode>('live');
+    const win = useWindows();
+    const [showReport, setShowReport] = useState(false);
+    const [overlayPanel, setOverlayPanel] = useState<string | null>(null); // tablet: side panel slides over the map
+    const mapAreaRef = useRef<HTMLDivElement>(null);
+
+    // Open a window wherever it lives on this screen size
+    const openWin = (id: string, mode: AppMode = appMode) => {
+        if (mode !== appMode) setAppMode(mode);
+        if (layoutMode === 'phone') { setActiveSheet(id); return; }
+        win.open(id, mode);
+        if (layoutMode === 'tablet' && win.stateOf(id) !== 'floating') setOverlayPanel(id);
+    };
+    const switchMode = (m: AppMode) => {
+        setAppMode(m);
+        setActiveSheet(null);
+        setOverlayPanel(null);
+        if (m === 'scenarios' && layoutMode !== 'phone') win.setActive('scenarios', activeScenarios.length ? 'results' : 'library');
+    };
+    const runScenarios = (sel: RiskScenario[]) => {
+        handleRunSimulation(sel, false);
+        setAppMode('scenarios');
+        if (layoutMode === 'phone') setActiveSheet('results');
+        else { win.open('results', 'scenarios'); if (layoutMode === 'tablet') setOverlayPanel('results'); }
+    };
+    const handleStopSimulation = () => {
+        setActiveScenarios([]);
+        setIsPlaying(false);
+        setTimeline([]);
+        setCurrentDay(0);
+    };
+    const handleVideoBriefing = () => {
+        if (!activeScenarios.length) { openWin('library', 'scenarios'); return; }
+        handleGenerateReport();
+    };
+    const resetLayout = () => { win.reset(); clearSavedLayout(); setOverlayPanel(null); };
+
+    const feedsLive = `${new Set(liveOutages.map(o => (o.source || '').replace(/\s*\(live\)/i, ''))).size} networks reporting`;
+    const chatPanel = (
+        <ChatPanel embedded
+            isOpen={true}
+            activeScenarios={activeScenarios}
+            assetCount={assets.length}
+            regionName={activeRegion.name}
+            nesoData={nesoData}
+            outages={[...liveOutages, ...(showHistorical ? historicalOutages : [])]}
+            onMapAction={handleMapAction}
+            generationMix={generationMix}
+            systemWarningsSummary={systemWarnings.length ? systemWarnings.slice(0, 5).map(w => `${w.type} (${w.published}): ${w.text.slice(0, 200)}`).join(' | ') : ''}
+            liveSystemsSummary={[
+                icFlows.length ? `Interconnector flows (MW, +import/-export): ${icFlows.map(f => `${f.name} ${f.mw}`).join(', ')}` : '',
+                gas ? `Gas NTS: demand ${gas.ntsDemand} mcm/d, supply ${gas.totalSupply} mcm/d, linepack ${gas.linepack} mcm, to power stations ${gas.powerStations} mcm/d` : '',
+                energyFlows.hasGasDetail ? `Gas by route (mcm/d, +into GB/-out): ${energyFlows.links.filter(l => l.kind === 'gas').map(l => `${l.name} [${l.group}] ${l.value}`).join(', ')}. Imports (Norway pipeline + LNG + continent) ≈ ${energyFlows.gasImportShare !== null ? Math.round(energyFlows.gasImportShare * 100) : '?'}% of supply; St Fergus is mixed UK/Norway. Energy equivalents: electricity in ${energyFlows.elecImportGW.toFixed(1)} GW / out ${energyFlows.elecExportGW.toFixed(1)} GW; gas imported ${energyFlows.gasImportGW.toFixed(0)} GW (at 39.5 MJ/m3)` : '',
+                `Met Office warnings: ${weatherWarnings.length ? weatherWarnings.map(w => `${w.level} ${w.type} - ${w.region}`).join('; ') : 'none'}`,
+                floods ? `EA flood warnings (England): ${floods.warnings.length} warnings (${floods.warnings.filter(w => w.level === 1).length} severe), ${floods.alerts} alerts${floods.warnings.length ? ': ' + floods.warnings.slice(0, 8).map(w => w.area).join('; ') : ''}` : '',
+                Object.keys(regionalCarbon).length ? `Regional carbon intensity (gCO2/kWh): ${Object.entries(regionalCarbon).map(([k, v]) => `${k} ${v.intensity}`).join(', ')}` : '',
+            ].filter(Boolean).join('\n- ')}
+            generatorOutagesSummary={generatorOutages.length ? `${generatorOutages.length} active notices, ${Math.round(generatorOutages.reduce((a, g) => a + g.unavailableMW, 0))} MW unavailable in total (${Math.round(generatorOutages.filter(g => !g.planned).reduce((a, g) => a + g.unavailableMW, 0))} MW unplanned). Largest: ${generatorOutages.slice(0, 8).map(g => `${g.siteName || g.unit} ${g.unit} ${g.fuelType} ${Math.round(g.unavailableMW)}MW ${g.planned ? 'planned' : 'UNPLANNED'} (${g.cause})`).join('; ')}` : ''}
+            timelineNow={activeScenarios.length > 0 && timeline[currentDay] ? `${timeline[currentDay].label || 'step ' + currentDay}: ${timeline[currentDay].consumersOffline.toLocaleString()} customers off supply, ${timeline[currentDay].restorationPct}% restored, cost so far £${timeline[currentDay].costMillions}m` : ''}
+        />
+    );
+
+    const layerButton = (cat: string, label: React.ReactNode, swatch: React.ReactNode, title?: string) => (
+        <button key={cat} type="button" onClick={() => toggleLayer(cat)} aria-pressed={visibleLayers.has(cat)} title={title}
+            className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs font-semibold border ${visibleLayers.has(cat) ? 'bg-slate-800 text-white border-slate-700' : 'text-slate-500 border-transparent hover:text-slate-300'}`}>
+            {swatch}{label}
+        </button>
+    );
+    const layersContent = (
+        <div className="space-y-3">
+            <label className="flex lg:hidden items-center gap-2 bg-slate-900 border border-slate-700 rounded-lg px-2.5 h-9">
+                <MagnifyingGlassIcon className="w-4 h-4 text-slate-500" />
+                <span className="sr-only">Search assets</span>
+                <input value={customAssetQuery} onChange={e => setCustomAssetQuery(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleCustomAssetSearch()} placeholder="Search assets (e.g. airports)" className="flex-1 bg-transparent text-xs text-white outline-none" />
+            </label>
+            <div>
+                <div className="text-[10px] font-bold text-slate-400 tracking-wider mb-1">INFRASTRUCTURE</div>
+                {['Generation', 'Transmission', 'Distribution', 'Interconnector', 'Retail'].map(cat => layerButton(cat, cat === 'Retail' ? 'Data centres' : cat, <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: ASSET_TYPES.find(t => t.category === cat)?.color || '#fff' }} />))}
+                {visibleLayers.has('Custom') && layerButton('Custom', 'Search results', <span className="w-2.5 h-2.5 bg-rose-500" />)}
+                {layerButton('DNO Regions', 'Network operator areas', <span className="w-2.5 h-2.5 rounded-full border border-slate-400" />)}
+            </div>
+            <div>
+                <div className="text-[10px] font-bold text-slate-400 tracking-wider mb-1">LIVE LAYERS</div>
+                {layerButton('Interconnector Flows', 'Energy flows (power and gas)', <span className="w-2.5 h-2.5 rounded-full bg-gradient-to-r from-cyan-400 to-amber-500" />)}
+                {layerButton('Generator Outages', 'Generator outages', <span className="text-[8px] px-1 rounded border border-amber-500 bg-amber-900 text-amber-200 leading-tight">MW</span>, 'Elexon REMIT. Amber = unplanned.')}
+                {layerButton('Flood Warnings', 'Flood warnings', <span className="w-2.5 h-2.5 bg-blue-500" />)}
+                {layerButton('Weather Warnings', 'Weather warnings', <span className="w-0 h-0 border-l-[5px] border-l-transparent border-r-[5px] border-r-transparent border-b-[9px] border-b-yellow-400" />)}
+                {layerButton('Weather Radar', 'Weather radar', <CloudIcon className="w-3.5 h-3.5 text-cyan-400" />)}
+            </div>
+            <p className="text-[10px] text-slate-500">Zoom in to see local substations, lines, solar farms and batteries. Map legend: Help → Map legend.</p>
+        </div>
+    );
+
+    const toolsContent = (
+        <div className="space-y-3 text-xs">
+            <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 space-y-2">
+                <div className="flex justify-between items-center"><b>Data refresh</b>
+                    <button type="button" onClick={() => setAllowBackgroundUpdates(!allowBackgroundUpdates)} className={`text-[11px] font-bold px-2 py-1 rounded border ${allowBackgroundUpdates ? 'bg-green-900/30 text-green-400 border-green-800' : 'bg-red-900/30 text-red-400 border-red-800'}`}>{allowBackgroundUpdates ? 'LIVE' : 'PAUSED'}</button>
+                </div>
+                <label className="block text-[11px] text-slate-400">Every {updateInterval} min
+                    <input type="range" min="1" max="60" step="1" value={updateInterval} onChange={e => setUpdateInterval(Number(e.target.value))} disabled={!allowBackgroundUpdates} className="w-full accent-cyan-500" />
+                </label>
+                <button type="button" onClick={handleUpdateData} className="w-full flex items-center justify-center gap-2 bg-cyan-900/30 hover:bg-cyan-900/50 text-cyan-200 border border-cyan-500/30 py-2 rounded-lg font-semibold"><ArrowPathIcon className="w-3.5 h-3.5" /> Refresh everything now</button>
+            </div>
+            <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 space-y-2">
+                <b>Supply chain (AI)</b>
+                <p className="text-[11px] text-slate-400">{supplyChainInsights.length ? `${supplyChainInsights.length} risks identified.` : 'AI web search for supply-chain risks to the region (labelled as unverified).'}</p>
+                <button type="button" onClick={() => { setShowSupplyChainModal(true); if (supplyChainInsights.length === 0) handleRunSupplyChainAnalysis(); }} className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-semibold">{supplyChainInsights.length ? 'View details' : 'Run analysis'}</button>
+            </div>
+            {maintenanceAssets.length > 0 && <div className="bg-slate-900 border border-slate-800 rounded-lg p-3">
+                <b>Engineering work</b>
+                {maintenanceAssets.map(a => <button key={a.id} type="button" onClick={() => { setSelectedAsset(a); setMapCenterOverride({ lat: a.lat, lng: a.lng, zoom: 14 }); }} className="w-full text-left text-[11px] px-1.5 py-1 rounded hover:bg-slate-800 truncate">{a.name}</button>)}
+            </div>}
+            {standbyAssets.length > 0 && <div className="bg-slate-900 border border-slate-800 rounded-lg p-3">
+                <b>Standby capacity</b>
+                <div className="max-h-32 overflow-y-auto custom-scrollbar">
+                    {standbyAssets.map(a => <button key={a.id} type="button" onClick={() => { setSelectedAsset(a); setMapCenterOverride({ lat: a.lat, lng: a.lng, zoom: 14 }); }} className="w-full flex justify-between text-[11px] px-1.5 py-1 rounded hover:bg-slate-800"><span className="truncate">{a.name}</span><span className="text-slate-500 font-mono">{a.capacityMW} MW</span></button>)}
+                </div>
+            </div>}
+            <div className="grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => setIsTourActive(true)} className="py-2 rounded-lg border border-slate-700 hover:border-slate-500">Take the tour</button>
+                <button type="button" onClick={() => { setHelpInitialTab('guide'); setShowHelp(true); }} className="py-2 rounded-lg border border-slate-700 hover:border-slate-500">Help and sources</button>
+                <button type="button" onClick={resetLayout} className="py-2 rounded-lg border border-slate-700 hover:border-slate-500">Reset window layout</button>
+                <button type="button" onClick={async () => { await handleResetSystem(); resetLayout(); setAppMode('live'); }} className="py-2 rounded-lg border border-red-900 text-red-300 hover:text-white">Reset everything</button>
+            </div>
+        </div>
+    );
+
+    const windowDefs: WinDef[] = [
+        { id: 'overview', title: 'Live system', short: 'Overview', colour: '#22c55e', icon: SignalIcon, modes: ['live'], width: 420,
+          content: <OverviewPanel neso={nesoData} mix={generationMix} flows={energyFlows} gas={gas} outages={liveOutages} generatorOutages={generatorOutages} warnings={systemWarnings} feedsLive={feedsLive} onHistory={setHistoryModalMetric} onOpen={id => openWin(id)} /> },
+        { id: 'electricity', title: 'Electricity', short: 'Power', colour: '#eab308', icon: BoltIcon, modes: ['live'], width: 420,
+          content: <ElectricityPanel mix={generationMix} neso={nesoData} carbon={regionalCarbon} assets={assets} onHistory={setHistoryModalMetric} onSelect={a => { setSelectedAsset(a); setMapCenterOverride({ lat: a.lat, lng: a.lng, zoom: 12 }); }} /> },
+        { id: 'flows', title: 'Energy flows in and out of GB', short: 'Flows', colour: '#f59e0b', icon: ArrowsRightLeftIcon, modes: ['live', 'scenarios'], width: 420,
+          content: <EnergyFlowsPanel flows={energyFlows} updated={liveSystemsUpdated} /> },
+        { id: 'outages', title: 'Outages', short: 'Outages', colour: '#ef4444', icon: ExclamationTriangleIcon, modes: ['live'], width: 420,
+          content: <OutagesPanel outages={liveOutages} generatorOutages={generatorOutages} onFullList={() => setShowOutageList(true)} onGoTo={(lat, lng) => setMapCenterOverride({ lat, lng, zoom: 11 })} /> },
+        { id: 'systems', title: 'Notices, gas and weather', short: 'Systems', colour: '#06b6d4', icon: CloudIcon, modes: ['live'], width: 320,
+          content: <LiveSystemsPanel flows={icFlows} gas={gas} weather={weatherWarnings} floods={floods} generatorOutages={generatorOutages} systemWarnings={systemWarnings} updated={liveSystemsUpdated} /> },
+        { id: 'library', title: 'Scenario library', short: 'Library', colour: '#ef4444', icon: ListBulletIcon, modes: ['scenarios'], width: 420,
+          content: <ScenarioLibraryPanel scenarios={scenarios} running={activeScenarios} onRun={runScenarios} onManage={() => setShowScenarioManager(true)} /> },
+        { id: 'results', title: activeScenarios.length > 1 ? 'Results: composite event' : 'Results', short: 'Results', colour: '#dc2626', icon: ChartBarIcon, modes: ['scenarios'], width: 440,
+          content: <ResultsPanel active={activeScenarios} timeline={timeline} step={currentDay} onVideo={handleVideoBriefing} onReport={() => setShowReport(true)} onExport={handleQuickExport} onStop={handleStopSimulation} onLibrary={() => openWin('library')} /> },
+        { id: 'model', title: 'Scenario model: values and sources', short: 'Model', colour: '#a855f7', icon: InformationCircleIcon, modes: ['scenarios'], width: 460,
+          content: <ScenarioModelPanel /> },
+        { id: 'layers', title: 'Map layers', short: 'Layers', colour: '#64748b', icon: FunnelIcon, modes: ['live', 'scenarios'], width: 320, content: layersContent },
+        { id: 'analyst', title: 'Analyst AI', short: 'Analyst', colour: '#22d3ee', icon: ChatBubbleLeftRightIcon, modes: ['live', 'scenarios'], width: 400, fill: true, content: chatPanel },
+        { id: 'tools', title: 'Tools', short: 'Tools', colour: '#94a3b8', icon: WrenchScrewdriverIcon, modes: ['live', 'scenarios'], width: 340, content: toolsContent },
+    ];
+
     return (
         <div className="flex flex-col h-screen bg-slate-950 text-slate-100 overflow-hidden font-sans relative">
             {/* Startup Notification */}
             {showStartupToast && (
-                <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[70] bg-slate-900 border border-amber-500/50 text-amber-100 px-6 py-4 rounded-xl shadow-2xl animate-slideDown max-w-md pointer-events-none">
+                <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[30] bg-slate-900/95 border border-amber-500/50 text-amber-100 px-4 py-3 rounded-xl shadow-2xl animate-slideDown max-w-sm pointer-events-none">
                     <div className="flex items-center gap-3">
                         <ExclamationTriangleIcon className="w-6 h-6 text-amber-500 shrink-0" />
                         <div>
                             <h3 className="font-bold text-sm">Getting started</h3>
                             <p className="text-xs text-amber-200/80 mt-1">
                                 National infrastructure and live grid data load automatically. 
-                                Zoom into an area to load local substations and lines, and use {layoutMode === 'phone' ? <>the <span className="font-bold text-white">Layers</span> tab</> : <>the <span className="font-bold text-white">filter</span> button</>} to choose layers.
+                                Zoom in to see local substations and lines; choose layers under <span className="font-bold text-white">Layers</span>. Switch to <span className="font-bold text-white">Scenarios</span> to run risks.
                             </p>
                         </div>
                     </div>
@@ -1195,12 +1350,6 @@ export const App: React.FC = () => {
                 </div>
             )}
             
-            {/* Ensure Timer runs even if Data Sync panel is pinned (and thus unmounted from view) */}
-            {pinnedPanels.has('data_sync') && (
-                <div className="hidden">
-                    <UpdateTimer onTrigger={performUnifiedUpdate} isPaused={!allowBackgroundUpdates || isPlaying} intervalMinutes={updateInterval} />
-                </div>
-            )}
 
             {/* Print Preview Overlay */}
             {showPrintPreview && (
@@ -1298,927 +1447,137 @@ export const App: React.FC = () => {
             )}
 
             <div className="print:hidden flex flex-col h-full">
-                {/* Header */}
-                <header className="flex-none h-14 bg-slate-950 border-b border-slate-800 flex items-center justify-between px-4 z-50">
-                    <div className="flex items-center gap-3 min-w-0">
+                {/* The data refresh timer always runs (its controls are in Tools) */}
+                <div className="hidden"><UpdateTimer onTrigger={performUnifiedUpdate} isPaused={!allowBackgroundUpdates || isPlaying} intervalMinutes={updateInterval} /></div>
+
+                {/* ---------- Top bar ---------- */}
+                <header className="flex-none h-14 bg-slate-950 border-b border-slate-800 flex items-center gap-2 lg:gap-3 px-2 lg:px-4 z-50">
+                    <div className="flex items-center gap-2 shrink-0">
                         <BoltIcon className="w-6 h-6 text-yellow-500 shrink-0" />
-                        <div className="hidden sm:block">
-                            <h1 className="text-sm font-bold tracking-wide">ENERGY RESILIENCE</h1>
-                            <p className="text-[10px] text-slate-500">Risk Impact Sim</p>
+                        <div className="hidden xl:block">
+                            <h1 className="text-sm font-bold tracking-wide leading-tight">ENERGY RESILIENCE</h1>
+                            <p className="text-[10px] text-slate-500">GB energy system, live and what-if</p>
                         </div>
                     </div>
-
-                    {/* PINNED ITEMS DOCK */}
-                    <div className="flex-1 flex items-center justify-center gap-2 px-4 overflow-hidden">
-                        {Array.from(pinnedPanels).map(id => (
-                            <PinnedItem key={id} id={id} onUnpin={unpinPanel} />
-                        ))}
+                    <div role="tablist" aria-label="Mode" className="flex bg-slate-900 border border-slate-800 rounded-lg p-0.5 shrink-0">
+                        <button role="tab" type="button" aria-selected={appMode === 'live'} onClick={() => switchMode('live')} className={`px-3 lg:px-4 py-1.5 rounded-md text-xs font-semibold ${appMode === 'live' ? 'bg-cyan-700 text-white' : 'text-slate-400 hover:text-white'}`}>Live</button>
+                        <button role="tab" type="button" aria-selected={appMode === 'scenarios'} onClick={() => switchMode('scenarios')} className={`px-3 lg:px-4 py-1.5 rounded-md text-xs font-semibold ${appMode === 'scenarios' ? 'bg-red-700 text-white' : 'text-slate-400 hover:text-white'}`}>Scenarios{activeScenarios.length > 0 && appMode !== 'scenarios' ? ' ●' : ''}</button>
                     </div>
-
-                    <div className="flex items-center gap-4 shrink-0">
-                        <div 
-                            onClick={() => { setHelpInitialTab('status'); setShowHelp(true); }}
-                            className="flex items-center gap-2 px-3 py-1.5 rounded border border-slate-800 bg-slate-900/50 cursor-pointer hover:bg-slate-800 transition-colors group"
-                            title="Click to view System Status"
-                        >
-                            <div 
-                                className={`w-2.5 h-2.5 rounded-full shadow-[0_0_8px] transition-all duration-500 ${
-                                    systemHealth === 'green' ? 'bg-green-500 shadow-green-500/50' : 
-                                    systemHealth === 'amber' ? 'bg-amber-500 shadow-amber-500/50' : 'bg-red-500 shadow-red-500/50'
-                                }`} 
-                            />
-                            <div className="h-4 w-px bg-slate-700 mx-1"></div>
-                            <GlobeAmericasIcon className="w-4 h-4 text-slate-400 group-hover:text-white transition-colors" />
-                            <span className="text-xs font-bold text-slate-200">{activeRegion.name}</span>
-                        </div>
-                        
-                        <div className="h-6 w-px bg-slate-800 mx-2"></div>
-                        <button onClick={handleQuickExport} disabled={activeScenarios.length === 0} className="hidden md:block text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed group relative">
-                            <ArrowDownTrayIcon className="w-5 h-5" />
-                        </button>
-                        
-                        <div className="hidden sm:flex items-center border border-slate-800 rounded overflow-hidden text-xs font-bold text-slate-400" title="Text size for the whole app">
-                            <button onClick={() => changeFont(-1)} className="px-2 py-1 hover:bg-slate-800 hover:text-white" aria-label="Smaller text">A−</button>
-                            <button onClick={() => changeFont(1)} className="px-2 py-1 hover:bg-slate-800 hover:text-white border-l border-slate-800" aria-label="Larger text">A+</button>
-                        </div>
-                        <button
-                            onClick={() => setShowAiKey(true)}
-                            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded border text-xs font-bold transition-colors ${
-                                aiEnabled
-                                    ? 'border-cyan-800 bg-cyan-950/40 text-cyan-300 hover:bg-cyan-900/40'
-                                    : 'border-amber-700 bg-amber-950/40 text-amber-300 hover:bg-amber-900/40 animate-pulse'
-                            }`}
-                            title={aiEnabled ? 'AI features on (your Gemini key). Click to manage.' : 'Add your free Gemini key to turn on AI features'}
-                        >
-                            <SparklesIcon className="w-4 h-4" />
-                            <span>{aiEnabled ? 'AI: On' : 'AI: Off'}</span>
-                        </button>
-
-                        <div className="h-6 w-px bg-slate-800 mx-2"></div>
-                        <button onClick={() => { setHelpInitialTab('guide'); setShowHelp(true); }} className="text-slate-400 hover:text-white shrink-0"><QuestionMarkCircleIcon className="w-5 h-5" /></button>
+                    {appMode === 'scenarios' && (
+                        <ol aria-label="Steps" className="hidden 2xl:flex gap-1 text-[11px] shrink-0">
+                            {[['Choose', 'library', true], ['Run', 'results', activeScenarios.length > 0], ['Results', 'results', activeScenarios.length > 0], ['Report', 'report', false]].map(([label, target, done]: any, i) => (
+                                <li key={label}><button type="button" onClick={() => target === 'report' ? setShowReport(true) : openWin(target)} className={`px-2.5 py-1 rounded-full ${done ? 'bg-slate-800 text-slate-300' : 'border border-slate-700 text-slate-400'} hover:text-white`}>{i + 1} {label}{done ? ' ✓' : ''}</button></li>
+                            ))}
+                        </ol>
+                    )}
+                    <label className="hidden lg:flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-lg px-2.5 h-9 w-56 xl:w-64">
+                        <MagnifyingGlassIcon className="w-4 h-4 text-slate-500 shrink-0" />
+                        <span className="sr-only">Search places and assets</span>
+                        <input value={customAssetQuery} onChange={e => setCustomAssetQuery(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleCustomAssetSearch()} placeholder="Search assets (e.g. airports)" className="flex-1 min-w-0 bg-transparent text-xs text-white outline-none" />
+                        {isSearchingAssets && <ArrowPathIcon className="w-3.5 h-3.5 animate-spin text-cyan-400" />}
+                    </label>
+                    <div className="flex-1" />
+                    <button type="button" onClick={() => { setHelpInitialTab('status'); setShowHelp(true); }} title="System status" className="hidden md:flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-slate-800 bg-slate-900 hover:bg-slate-800 shrink-0">
+                        <span className={`w-2.5 h-2.5 rounded-full ${systemHealth === 'green' ? 'bg-green-500' : systemHealth === 'amber' ? 'bg-amber-500' : 'bg-red-500'}`} />
+                        <span className="text-xs font-semibold text-slate-200">{activeRegion.name}</span>
+                    </button>
+                    <button type="button" onClick={() => openWin('analyst')} className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-cyan-900 bg-cyan-950/50 text-cyan-200 text-xs font-semibold hover:bg-cyan-900/50 shrink-0"><ChatBubbleLeftRightIcon className="w-4 h-4" /><span className="hidden lg:inline">Analyst AI</span></button>
+                    <button type="button" onClick={handleVideoBriefing} disabled={activeScenarios.length === 0} title={activeScenarios.length ? 'Video briefing on the running scenario' : 'Run a scenario first to make a video briefing'} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-800 bg-slate-900 text-slate-200 text-xs font-semibold hover:bg-slate-800 disabled:opacity-40 shrink-0"><VideoCameraIcon className="w-4 h-4" /><span className="hidden lg:inline">Video briefing</span></button>
+                    <button type="button" onClick={() => setShowReport(true)} className="flex items-center gap-1.5 px-2.5 lg:px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold shrink-0"><DocumentTextIcon className="w-4 h-4" /><span className="hidden sm:inline">Create report</span></button>
+                    <button type="button" onClick={() => setShowAiKey(true)} title={aiEnabled ? 'AI features on (your Gemini key). Click to manage.' : 'Add your free Gemini key to turn on AI features'}
+                        className={`flex items-center gap-1 px-2 py-1.5 rounded-lg border text-xs font-bold shrink-0 ${aiEnabled ? 'border-cyan-900 bg-cyan-950/40 text-cyan-300' : 'border-amber-700 bg-amber-950/40 text-amber-300 animate-pulse'}`}>
+                        <SparklesIcon className="w-4 h-4" /><span className="hidden md:inline">{aiEnabled ? 'AI: On' : 'AI: Off'}</span>
+                    </button>
+                    <div className="hidden md:flex items-center border border-slate-800 rounded-lg overflow-hidden text-xs font-bold text-slate-400 shrink-0" title="Text size for the whole app">
+                        <button type="button" onClick={() => changeFont(-1)} className="px-2 py-1.5 hover:bg-slate-800 hover:text-white" aria-label="Smaller text">A−</button>
+                        <button type="button" onClick={() => changeFont(1)} className="px-2 py-1.5 hover:bg-slate-800 hover:text-white border-l border-slate-800" aria-label="Larger text">A+</button>
                     </div>
+                    <button type="button" onClick={() => { setHelpInitialTab('guide'); setShowHelp(true); }} aria-label="Help" className="text-slate-400 hover:text-white shrink-0 p-1"><QuestionMarkCircleIcon className="w-6 h-6" /></button>
                 </header>
 
-                <main className="flex-1 flex overflow-hidden relative">
-                    <div className="absolute inset-0 z-0">
-                        <MapVisualization 
-                            region={activeRegion}
-                            assets={assets}
-                            outages={liveOutages}
-                            historicalOutages={showHistorical ? historicalOutages : []}
-                            activeScenarios={activeScenarios}
-                            dnoRegions={memoizedDnoRegions}
-                            day={currentDay}
-                            filters={visibleLayers}
-                            onAssetSelect={setSelectedAsset}
-                            onViewChange={handleViewChange}
-                            currentImpact={timeline[currentDay]?.consumersOffline || 0}
-                            peakImpact={Math.max(...timeline.map(t => t.consumersOffline)) || 1}
-                            viewOverride={mapCenterOverride}
-                            isScenarioComplete={isScenarioComplete}
-                            generatorOutages={generatorOutages}
-                            interconnectorFlows={icFlows}
-                            energyFlows={energyFlows.links}
-                            regionalCarbon={regionalCarbon}
-                            floodWarnings={floods?.warnings || []}
-                            weatherWarnings={weatherWarnings}
-                        />
-                    </div>
-                    
-                    {/* Standalone Map Home Button */}
-                    <button 
-                        onClick={handleHomeView} 
-                        className="absolute bottom-20 sm:bottom-24 left-3 sm:left-8 z-10 bg-slate-900 border border-slate-700 p-3 rounded-full shadow-xl hover:bg-slate-800 text-slate-400 hover:text-white transition-all hover:scale-110 active:scale-95 group"
-                        title="Reset Map View"
-                    >
-                        <MapIcon className="w-6 h-6 group-hover:text-cyan-400" />
-                    </button>
-
-                    {selectedAsset && (
-                        <AssetDetails 
-                            asset={selectedAsset} 
-                            regionName={activeRegion.name}
-                            onClose={() => setSelectedAsset(null)}
-                        />
+                {/* ---------- Body: rail | map (+ timeline) | side panel ---------- */}
+                <div className={`flex-1 flex min-h-0 relative ${layoutMode === 'phone' ? 'pb-14' : ''}`}>
+                    {layoutMode !== 'phone' && (
+                        <ToolRail defs={windowDefs} mode={appMode} win={win} onReset={resetLayout}
+                            overlayPanel={layoutMode === 'tablet'} overlayOpen={overlayPanel} onOpenOverlay={id => { win.setActive(appMode, id); setOverlayPanel(overlayPanel === id ? null : id); }} />
                     )}
-
-                    {/* Filter Panel (Left - Independent) */}
-                    {!minimizedPanels.has('infra') && !pinnedPanels.has('infra') && (
-                        <DraggablePanel id="infra" title={PANEL_CONFIG['infra']?.title}
-                            key={`infra_${layoutKey}`} 
-                            initialX={panelPositions['infra']?.x ?? 16} 
-                            initialY={panelPositions['infra']?.y ?? 600} 
-                            className="w-48"
-                            zIndex={getZIndex('infra')}
-                            onInteract={() => bringToFront('infra')}
-                        >
-                            <div className="bg-slate-900/90 backdrop-blur border border-slate-700 p-3 rounded-lg shadow-xl relative group pointer-events-auto">
-                                <div className="absolute top-2 right-2 flex gap-1">
-                                    <button onClick={() => pinPanel('infra')} className="text-slate-500 hover:text-cyan-400" title="Pin to top"><MapPinIcon className="w-3.5 h-3.5" /></button>
-                                    <button onClick={() => toggleMinimize('infra')} className="text-slate-500 hover:text-white"><MinusIcon className="w-4 h-4" /></button>
-                                </div>
-                                <div className="flex justify-between items-center mb-2 cursor-pointer pr-10" onClick={() => setIsInfraCollapsed(!isInfraCollapsed)}>
-                                    <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
-                                        <FunnelIcon className="w-3 h-3" /> Infrastructure
-                                    </h3>
-                                    <button className="text-slate-500 hover:text-white">
-                                        <ChevronUpIcon className={`w-3 h-3 transition-transform ${isInfraCollapsed ? 'rotate-180' : ''}`} />
-                                    </button>
-                                </div>
-                                
-                                {!isInfraCollapsed && (
-                                    <div className="space-y-1.5 animate-slideDown">
-                                        {/* Search Box */}
-                                        <div className="relative mb-2">
-                                            <input 
-                                                type="text" 
-                                                placeholder="Search Assets (e.g. Airports)..." 
-                                                value={customAssetQuery}
-                                                onChange={(e) => setCustomAssetQuery(e.target.value)}
-                                                onKeyDown={(e) => e.key === 'Enter' && handleCustomAssetSearch()}
-                                                className="w-full bg-slate-950 border border-slate-600 rounded text-[10px] text-white px-2 py-1 pr-6 focus:border-cyan-500 outline-none"
-                                            />
-                                            <button 
-                                                onClick={handleCustomAssetSearch}
-                                                className="absolute right-1 top-1 text-slate-400 hover:text-cyan-400"
-                                                disabled={isSearchingAssets}
-                                            >
-                                                {isSearchingAssets ? <ArrowPathIcon className="w-3 h-3 animate-spin" /> : <MagnifyingGlassIcon className="w-3 h-3" />}
-                                            </button>
-                                        </div>
-
-                                        {['Generation', 'Transmission', 'Distribution', 'Interconnector', 'Retail'].map(cat => (
-                                            <button 
-                                                key={cat}
-                                                onClick={(e) => { e.stopPropagation(); toggleLayer(cat); }}
-                                                className={`w-full flex items-center gap-2 px-2 py-1 rounded text-[10px] font-bold transition-all ${visibleLayers.has(cat) ? 'bg-slate-800 text-white' : 'text-slate-500 opacity-50'}`}
-                                            >
-                                                <div className={`w-2 h-2 rounded-full`} style={{backgroundColor: ASSET_TYPES.find(t => t.category === cat)?.color || '#fff'}}></div>
-                                                {cat === 'Retail' ? 'Data / Retail' : cat}
-                                            </button>
-                                        ))}
-                                        {/* Custom Category Button (Visible if active) */}
-                                        {visibleLayers.has('Custom') && (
-                                            <button 
-                                                onClick={(e) => { e.stopPropagation(); toggleLayer('Custom'); }}
-                                                className={`w-full flex items-center gap-2 px-2 py-1 rounded text-[10px] font-bold transition-all ${visibleLayers.has('Custom') ? 'bg-slate-800 text-white' : 'text-slate-500 opacity-50'}`}
-                                            >
-                                                <div className="w-0 h-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-b-[8px] border-b-rose-500"></div>
-                                                Custom Results
-                                            </button>
-                                        )}
-                                        <button 
-                                            onClick={(e) => { e.stopPropagation(); toggleLayer('DNO Regions'); }}
-                                            className={`w-full flex items-center gap-2 px-2 py-1 rounded text-[10px] font-bold transition-all ${visibleLayers.has('DNO Regions') ? 'bg-slate-800 text-white' : 'text-slate-500 opacity-50'}`}
-                                        >
-                                            <div className="w-2 h-2 rounded-full border border-slate-400"></div>
-                                            DNO Zones
-                                        </button>
-                                        
-                                        {/* Generator outages (Elexon REMIT) */}
-                                        <button 
-                                            onClick={(e) => { e.stopPropagation(); toggleLayer('Generator Outages'); }}
-                                            className={`w-full flex items-center gap-2 px-2 py-1 rounded text-[10px] font-bold transition-all ${visibleLayers.has('Generator Outages') ? 'bg-slate-800 text-white' : 'text-slate-500 opacity-50'}`}
-                                            title="Live power station and interconnector outages (Elexon REMIT). Amber = unplanned."
-                                        >
-                                            <span className="text-[8px] px-1 rounded border border-amber-500 bg-amber-900 text-amber-200 leading-tight">MW</span>
-                                            Generator Outages
-                                        </button>
-
-                                        <button 
-                                            onClick={(e) => { e.stopPropagation(); toggleLayer('Interconnector Flows'); }}
-                                            className={`w-full flex items-center gap-2 px-2 py-1 rounded text-[10px] font-bold transition-all ${visibleLayers.has('Interconnector Flows') ? 'bg-slate-800 text-white' : 'text-slate-500 opacity-50'}`}
-                                        >
-                                            <div className="w-2 h-2 rounded-full bg-gradient-to-r from-cyan-400 to-amber-500"></div>
-                                            Energy Flows (power &amp; gas)
-                                        </button>
-                                        <button 
-                                            onClick={(e) => { e.stopPropagation(); toggleLayer('Flood Warnings'); }}
-                                            className={`w-full flex items-center gap-2 px-2 py-1 rounded text-[10px] font-bold transition-all ${visibleLayers.has('Flood Warnings') ? 'bg-slate-800 text-white' : 'text-slate-500 opacity-50'}`}
-                                        >
-                                            <div className="w-2 h-2 bg-blue-500"></div>
-                                            Flood Warnings
-                                        </button>
-                                        <button 
-                                            onClick={(e) => { e.stopPropagation(); toggleLayer('Weather Warnings'); }}
-                                            className={`w-full flex items-center gap-2 px-2 py-1 rounded text-[10px] font-bold transition-all ${visibleLayers.has('Weather Warnings') ? 'bg-slate-800 text-white' : 'text-slate-500 opacity-50'}`}
-                                        >
-                                            <div className="w-0 h-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-b-[7px] border-b-yellow-400"></div>
-                                            Weather Warnings
-                                        </button>
-                                        {/* Weather Radar Toggle */}
-                                        <button 
-                                            onClick={(e) => { e.stopPropagation(); toggleLayer('Weather Radar'); }}
-                                            className={`w-full flex items-center gap-2 px-2 py-1 rounded text-[10px] font-bold transition-all ${visibleLayers.has('Weather Radar') ? 'bg-slate-800 text-white' : 'text-slate-500 opacity-50'}`}
-                                        >
-                                            <CloudIcon className={`w-3 h-3 ${visibleLayers.has('Weather Radar') ? 'text-cyan-400' : ''}`} />
-                                            Weather Radar
-                                        </button>
-                                    </div>
-                                )}
-                            </div>
-                        </DraggablePanel>
-                    )}
-
-                    {/* Data Sync Panel */}
-                    {!minimizedPanels.has('data_sync') && !pinnedPanels.has('data_sync') && (
-                        <DraggablePanel id="data_sync" title={PANEL_CONFIG['data_sync']?.title}
-                            key={`data_sync_${layoutKey}`} 
-                            initialX={panelPositions['data_sync']?.x ?? 16} 
-                            initialY={panelPositions['data_sync']?.y ?? 430} 
-                            className="w-auto pointer-events-auto"
-                            zIndex={getZIndex('data_sync')}
-                            onInteract={() => bringToFront('data_sync')}
-                        >
-                            <div className="bg-slate-900/90 backdrop-blur border border-slate-700 p-3 rounded-lg shadow-xl w-64">
-                                <div className="flex justify-between items-center mb-3 border-b border-slate-800 pb-2">
-                                    <h3 className="text-[10px] font-bold text-cyan-400 uppercase tracking-widest flex items-center gap-1">
-                                        <ArrowPathIcon className="w-3 h-3" /> Data Sync
-                                    </h3>
-                                    <div className="flex gap-1">
-                                        <button onClick={() => pinPanel('data_sync')} className="text-slate-500 hover:text-cyan-400" title="Pin to top"><MapPinIcon className="w-3.5 h-3.5" /></button>
-                                        <button onClick={() => toggleMinimize('data_sync')}><MinusIcon className="w-3.5 h-3.5 text-slate-500 hover:text-white" /></button>
-                                    </div>
-                                </div>
-                                
-                                <div className="space-y-3">
-                                    <div className="flex justify-between items-center bg-slate-800/50 p-2 rounded">
-                                        <div className="flex items-center gap-2">
-                                            <UpdateTimer onTrigger={performUnifiedUpdate} isPaused={!allowBackgroundUpdates || isPlaying} intervalMinutes={updateInterval} />
-                                        </div>
-                                        <button 
-                                            onClick={() => setAllowBackgroundUpdates(!allowBackgroundUpdates)}
-                                            className={`text-xs font-bold px-2 py-1 rounded border transition-colors ${allowBackgroundUpdates ? 'bg-green-900/30 text-green-400 border-green-800' : 'bg-red-900/30 text-red-400 border-red-800'}`}
-                                        >
-                                            {allowBackgroundUpdates ? 'LIVE' : 'PAUSED'}
-                                        </button>
-                                    </div>
-
-                                    <div className="px-1">
-                                        <div className="flex justify-between items-center mb-1">
-                                            <span className="text-[9px] text-slate-400 uppercase font-bold">Update Interval</span>
-                                            <span className="text--[9px] font-mono text-white">{updateInterval}m</span>
-                                        </div>
-                                        <input 
-                                            type="range" min="1" max="60" step="1" 
-                                            value={updateInterval} 
-                                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setUpdateInterval(Number(e.target.value))}
-                                            disabled={!allowBackgroundUpdates}
-                                            className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
-                                        />
-                                    </div>
-
-                                    <button 
-                                        onClick={handleUpdateData}
-                                        className="w-full flex items-center justify-center gap-2 bg-cyan-900/30 hover:bg-cyan-900/50 text-cyan-200 border border-cyan-500/30 py-2 rounded text-xs font-bold transition-colors"
-                                    >
-                                        <ArrowPathIcon className="w-3 h-3" /> Force Deep Update
-                                    </button>
-                                </div>
-                            </div>
-                        </DraggablePanel>
-                    )}
-
-                    {/* Scenarios Panel */}
-                    {!minimizedPanels.has('scenarios_pane') && !pinnedPanels.has('scenarios_pane') && (
-                        <DraggablePanel id="scenarios_pane" title={PANEL_CONFIG['scenarios_pane']?.title}
-                            key={`scenarios_pane_${layoutKey}`} 
-                            initialX={panelPositions['scenarios_pane']?.x ?? 16} 
-                            initialY={panelPositions['scenarios_pane']?.y ?? 760} 
-                            className="w-auto pointer-events-auto"
-                            zIndex={getZIndex('scenarios_pane')}
-                            onInteract={() => bringToFront('scenarios_pane')}
-                        >
-                            <div className="bg-slate-900/90 backdrop-blur border border-red-500/30 p-3 rounded-lg shadow-xl w-56 group">
-                                <div className="flex justify-between items-center mb-3">
-                                    <h3 className="text-[10px] font-bold text-red-400 uppercase tracking-widest flex items-center gap-1">
-                                        <PlayIcon className="w-3 h-3" /> Scenarios
-                                    </h3>
-                                    <div className="flex gap-1">
-                                        <button onClick={() => pinPanel('scenarios_pane')} className="text-slate-500 hover:text-cyan-400" title="Pin to top"><MapPinIcon className="w-3.5 h-3.5" /></button>
-                                        <button onClick={() => toggleMinimize('scenarios_pane')}><MinusIcon className="w-3.5 h-3.5 text-slate-500 hover:text-white" /></button>
-                                    </div>
-                                </div>
-                                <div className="text-xs text-slate-300 mb-3 bg-slate-800/50 p-2 rounded border border-slate-700/50">
-                                    {activeScenarios.length > 0 ? (
-                                        <span className="text-red-300 font-bold">{activeScenarios.length} Active Events</span>
-                                    ) : (
-                                        "No active simulations."
-                                    )}
-                                </div>
-                                <button 
-                                    onClick={() => setShowScenarioManager(true)} 
-                                    className="w-full bg-red-600 hover:bg-red-500 text-white rounded py-2 text-xs font-bold transition-colors flex items-center justify-center gap-2 shadow-lg shadow-red-900/20"
-                                >
-                                    <ExclamationTriangleIcon className="w-4 h-4" /> Manage Scenarios
-                                </button>
-                            </div>
-                        </DraggablePanel>
-                    )}
-
-                    {/* Reset View Panel */}
-                    {!minimizedPanels.has('reset_view') && !pinnedPanels.has('reset_view') && (
-                        <DraggablePanel id="reset_view" title={PANEL_CONFIG['reset_view']?.title}
-                            key={`reset_view_${layoutKey}`} 
-                            initialX={panelPositions['reset_view']?.x ?? 16} 
-                            initialY={panelPositions['reset_view']?.y ?? (window.innerHeight - 140)} 
-                            className="w-auto pointer-events-auto"
-                            zIndex={getZIndex('reset_view')}
-                            onInteract={() => bringToFront('reset_view')}
-                        >
-                            <div className="bg-slate-900/95 backdrop-blur border border-red-500/50 shadow-red-500/20 p-4 rounded-lg shadow-2xl w-72">
-                                <div className="flex justify-between items-center mb-3">
-                                    <h3 className="text-[10px] font-bold text-red-500 uppercase tracking-widest flex items-center gap-1">
-                                        <StopCircleIcon className="w-3 h-3" /> View Control
-                                    </h3>
-                                    <div className="flex gap-1">
-                                        <button onClick={() => pinPanel('reset_view')} className="text-slate-500 hover:text-cyan-400" title="Pin to top"><MapPinIcon className="w-3.5 h-3.5" /></button>
-                                        <button onClick={() => toggleMinimize('reset_view')}><MinusIcon className="w-3 h-3 text-slate-500 hover:text-white" /></button>
-                                    </div>
-                                </div>
-                                <button 
-                                    onClick={handleResetSystem} 
-                                    className="w-full bg-cyan-600 hover:bg-cyan-500 text-white rounded py-2 text-xs font-bold transition-colors flex items-center justify-center gap-2 shadow-lg"
-                                >
-                                    <ArrowPathIcon className="w-4 h-4" /> Reset System to Default
-                                </button>
-                            </div>
-                        </DraggablePanel>
-                    )}
-
-                    {/* 2. System Status Card (Regional Network) (Moved to Top Left) */}
-                    {!minimizedPanels.has('system_monitor') && !pinnedPanels.has('system_monitor') && (
-                        <DraggablePanel id="system_monitor" title={PANEL_CONFIG['system_monitor']?.title}
-                            key={`system_monitor_${layoutKey}`} 
-                            initialX={panelPositions['system_monitor']?.x ?? 16} 
-                            initialY={panelPositions['system_monitor']?.y ?? 70} 
-                            className="w-auto pointer-events-auto"
-                            zIndex={getZIndex('system_monitor')}
-                            onInteract={() => bringToFront('system_monitor')}
-                        >
-                            <div className="bg-slate-900/90 backdrop-blur border border-slate-700 p-4 rounded-lg shadow-xl pointer-events-auto w-64 relative">
-                                <div className="absolute top-2 right-2 flex gap-1">
-                                    <button onClick={() => pinPanel('system_monitor')} className="text-slate-500 hover:text-cyan-400" title="Pin to top"><MapPinIcon className="w-3.5 h-3.5" /></button>
-                                    <button onClick={() => toggleMinimize('system_monitor')} className="text-slate-500 hover:text-white"><MinusIcon className="w-4 h-4" /></button>
-                                </div>
-                                <div className="flex items-center gap-2 text-green-400 mb-2">
-                                    <ShieldCheckIcon className="w-5 h-5" /> <span className="text-sm font-bold uppercase">Regional Network</span>
-                                </div>
-                                <p className="text-xs text-slate-400 mb-3">Monitoring {assets.length} assets across {activeRegion.name}.</p>
-                                
-                                <div className="border-t border-slate-700 pt-3 grid grid-cols-2 gap-y-3 gap-x-2 text-[10px]">
-                                    <div 
-                                        className="p-1 rounded cursor-pointer hover:bg-slate-800 transition-colors"
-                                        onClick={() => setHistoryModalMetric('demand')}
-                                        title="View Demand History"
-                                    >
-                                        <span className="block text-slate-500 font-bold uppercase flex items-center gap-1">
-                                            Grid Demand <ChartBarIcon className="w-3 h-3" />
-                                        </span>
-                                        <span className="text-white font-mono text-base">{nesoData.demand > 0 ? `${(nesoData.demand / 1000).toFixed(2)} GW` : '–'}{nesoData.estimated && nesoData.demand > 0 && <span className="text-[9px] text-amber-400 ml-1" title="Live feed unavailable - last known value">est.</span>}</span>
-                                    </div>
-                                    <div 
-                                        className="p-1 rounded cursor-pointer hover:bg-slate-800 transition-colors"
-                                        onClick={() => setHistoryModalMetric('frequency')}
-                                        title="View Frequency History"
-                                    >
-                                        <span className="block text-slate-500 font-bold uppercase flex items-center gap-1">
-                                            Frequency <ChartBarIcon className="w-3 h-3" />
-                                        </span>
-                                        <span className={`font-mono text-base ${nesoData.frequency < 49.8 || nesoData.frequency > 50.2 ? 'text-red-400' : 'text-green-400'}`}>
-                                            {nesoData.estimated && nesoData.demand === 0 ? '–' : `${nesoData.frequency.toFixed(3)} Hz`}{nesoData.estimated && nesoData.demand > 0 && <span className="text-[9px] text-amber-400 ml-1" title="Live feed unavailable - last known value">est.</span>}
-                                        </span>
-                                    </div>
-                                    {generationMix && (
-                                        <>
-                                            <div className="group cursor-pointer" onClick={() => setShowGenList('Renewables')}>
-                                                <span className="text-green-500 font-bold uppercase flex items-center gap-1">Renewables <ListBulletIcon className="w-3 h-3 text-slate-500 group-hover:text-green-400" /></span>
-                                                <span className="text-white font-mono text-sm group-hover:underline">{generationMix.renewablesPerc}%</span>
-                                            </div>
-                                            <div className="group cursor-pointer" onClick={() => setShowGenList('Fossil')}>
-                                                <span className="text-orange-500 font-bold uppercase flex items-center gap-1">Fossil Fuel <ListBulletIcon className="w-3 h-3 text-slate-500 group-hover:text-orange-400" /></span>
-                                                <span className="text-white font-mono text-sm group-hover:underline">{generationMix.fossilPerc}%</span>
-                                            </div>
-                                        </>
-                                    )}
-                                </div>
-                            </div>
-                        </DraggablePanel>
-                    )}
-
-                    {/* Grid Status Panel / Live Outages (Moved Underneath System Monitor) */}
-                    {!isGrowthMode && !minimizedPanels.has('grid_status') && !pinnedPanels.has('grid_status') && (
-                        <DraggablePanel id="grid_status" title={PANEL_CONFIG['grid_status']?.title}
-                            key={`grid_status_${layoutKey}`} 
-                            initialX={panelPositions['grid_status']?.x ?? 16} 
-                            initialY={panelPositions['grid_status']?.y ?? 250} 
-                            className="w-48"
-                            zIndex={getZIndex('grid_status')}
-                            onInteract={() => bringToFront('grid_status')}
-                        >
-                             <div className="relative group pointer-events-auto">
-                                <div className="absolute top-1 right-1 z-20 flex gap-1">
-                                    <button onClick={() => pinPanel('grid_status')} className="p-1 bg-slate-900/50 rounded hover:bg-slate-800 text-slate-400 hover:text-cyan-400" title="Pin"><MapPinIcon className="w-3 h-3" /></button>
-                                    <button onClick={() => toggleMinimize('grid_status')} className="p-1 bg-slate-900/50 rounded hover:bg-slate-800 text-slate-400 hover:text-white"><MinusIcon className="w-3 h-3" /></button>
-                                </div>
-                                <div 
-                                    onClick={() => setShowOutageList(true)}
-                                    className={`bg-slate-900/90 ${liveOutages.length > 0 ? 'bg-red-900/90 border-red-500/50 hover:bg-red-900' : 'bg-emerald-900/90 border-emerald-500/50 hover:bg-emerald-900'} backdrop-blur border p-3 rounded-lg shadow-xl animate-fadeIn text-left transition-all w-full cursor-pointer hover:scale-105 relative overflow-hidden`}
-                                >
-                                    <div className="flex justify-between items-start">
-                                        <h3 className={`text-[10px] font-bold ${liveOutages.length > 0 ? 'text-red-200' : 'text-emerald-200'} uppercase tracking-widest mb-1 flex items-center gap-1`}>
-                                            {liveOutages.length > 0 ? <ExclamationTriangleIcon className="w-3 h-3 animate-pulse" /> : <ShieldCheckIcon className="w-3 h-3" />} 
-                                            {liveOutages.length > 0 ? 'Live Outages' : 'Grid Status'}
-                                        </h3>
-                                        <div className="w-10 h-4"></div> {/* Spacer for buttons */}
-                                    </div>
-                                    <p className="text-xs text-white font-bold group-hover:underline underline-offset-2 mb-1">
-                                        {liveOutages.length > 0 ? `${liveOutages.length} Active Incidents` : 'System Nominal'}
-                                    </p>
-                                    <p className="text-[9px] text-slate-400 font-mono text-right">
-                                        Last Updated: {lastOutageCheck.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                                    </p>
-                                    <p className="text-[9px] text-amber-300/80 mt-1 leading-tight">No open live feed for North West England (ENWL). <a href="https://www.enwl.co.uk" target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="underline hover:text-white">enwl.co.uk</a> · call 105</p>
-                                </div>
-                            </div>
-                        </DraggablePanel>
-                    )}
-
-                    {/* Live Systems Panel (Right) */}
-                    {!minimizedPanels.has('live_systems') && !pinnedPanels.has('live_systems') && (
-                        <DraggablePanel id="live_systems" title={PANEL_CONFIG['live_systems']?.title}
-                            key={`live_systems_${layoutKey}`}
-                            initialX={panelPositions['live_systems']?.x ?? (window.innerWidth - 290)}
-                            initialY={panelPositions['live_systems']?.y ?? 70}
-                            className="w-64"
-                            zIndex={getZIndex('live_systems')}
-                            onInteract={() => bringToFront('live_systems')}
-                        >
-                            <div className="relative bg-slate-900/90 backdrop-blur border border-slate-700 p-3 rounded-lg shadow-xl pointer-events-auto">
-                                <div className="absolute top-1 right-1 z-20 flex gap-1">
-                                    <button onClick={() => pinPanel('live_systems')} className="p-1 bg-slate-900/50 rounded hover:bg-slate-800 text-slate-400 hover:text-cyan-400" title="Pin"><MapPinIcon className="w-3 h-3" /></button>
-                                    <button onClick={() => toggleMinimize('live_systems')} className="p-1 bg-slate-900/50 rounded hover:bg-slate-800 text-slate-400 hover:text-white"><MinusIcon className="w-3 h-3" /></button>
-                                </div>
-                                <h3 className="text-[10px] font-bold text-white uppercase tracking-widest mb-2 flex items-center gap-1"><SignalIcon className="w-3 h-3 text-cyan-400" /> Live Systems</h3>
-                                <LiveSystemsPanel flows={icFlows} gas={gas} weather={weatherWarnings} floods={floods} generatorOutages={generatorOutages} systemWarnings={systemWarnings} updated={liveSystemsUpdated} />
-                            </div>
-                        </DraggablePanel>
-                    )}
-
-                    {/* Energy Flows Panel */}
-                    {!minimizedPanels.has('flows') && !pinnedPanels.has('flows') && (
-                        <DraggablePanel id="flows" title={PANEL_CONFIG['flows']?.title}
-                            key={`flows_${layoutKey}`}
-                            initialX={panelPositions['flows']?.x ?? Math.max(10, window.innerWidth - 640)}
-                            initialY={panelPositions['flows']?.y ?? 70}
-                            className="w-80"
-                            zIndex={getZIndex('flows')}
-                            onInteract={() => bringToFront('flows')}
-                        >
-                            <div className="relative bg-slate-900/90 backdrop-blur border border-slate-700 p-3 rounded-lg shadow-xl pointer-events-auto">
-                                <div className="absolute top-1 right-1 z-20 flex gap-1">
-                                    <button onClick={() => pinPanel('flows')} className="p-1 bg-slate-900/50 rounded hover:bg-slate-800 text-slate-400 hover:text-cyan-400" title="Pin"><MapPinIcon className="w-3 h-3" /></button>
-                                    <button onClick={() => toggleMinimize('flows')} className="p-1 bg-slate-900/50 rounded hover:bg-slate-800 text-slate-400 hover:text-white"><MinusIcon className="w-3 h-3" /></button>
-                                </div>
-                                <h3 className="text-[10px] font-bold text-white uppercase tracking-widest mb-2 flex items-center gap-1"><ArrowsRightLeftIcon className="w-3 h-3 text-amber-400" /> Energy flows in and out of GB</h3>
-                                <EnergyFlowsPanel flows={energyFlows} updated={liveSystemsUpdated} />
-                            </div>
-                        </DraggablePanel>
-                    )}
-
-                    {/* Engineering Work Panel (Right - Independent) */}
-                    {!minimizedPanels.has('engineering_work') && !pinnedPanels.has('engineering_work') && maintenanceAssets.length > 0 && (
-                        <DraggablePanel id="engineering_work" title={PANEL_CONFIG['engineering_work']?.title}
-                            key={`engineering_work_${layoutKey}`} 
-                            initialX={panelPositions['engineering_work']?.x ?? (window.innerWidth - 380)} 
-                            initialY={panelPositions['engineering_work']?.y ?? (activeScenarios.length > 0 ? 730 : 400)} 
-                            className="w-auto pointer-events-auto"
-                            zIndex={getZIndex('engineering_work')}
-                            onInteract={() => bringToFront('engineering_work')}
-                        >
-                            <div className="bg-slate-900/90 backdrop-blur border border-amber-500/30 p-3 rounded-lg shadow-xl relative group pointer-events-auto w-80">
-                                <div className="absolute top-1 right-1 z-20 flex gap-1">
-                                    <button onClick={() => pinPanel('engineering_work')} className="p-1 bg-slate-900/50 rounded hover:bg-slate-800 text-slate-400 hover:text-cyan-400" title="Pin"><MapPinIcon className="w-3 h-3" /></button>
-                                    <button onClick={() => toggleMinimize('engineering_work')} className="p-1 bg-slate-900/50 rounded hover:bg-slate-800 text-slate-400 hover:text-white"><MinusIcon className="w-3 h-3" /></button>
-                                </div>
-                                <h3 className="text-[10px] font-bold text-amber-500 uppercase tracking-widest mb-2 flex items-center gap-1">
-                                    <WrenchScrewdriverIcon className="w-3 h-3" /> Engineering Work
-                                </h3>
-                                
-                                <div className="space-y-1 max-h-32 overflow-y-auto custom-scrollbar">
-                                    {maintenanceAssets.map(asset => (
-                                        <div key={asset.id} onClick={() => { setSelectedAsset(asset); setMapCenterOverride({ lat: asset.lat, lng: asset.lng, zoom: 14 }); }} className="flex justify-between items-center text-xs p-1 hover:bg-slate-800 rounded cursor-pointer">
-                                            <span className="text-slate-300 truncate w-48">{asset.name}</span>
-                                            <span className="text-amber-400 text-[9px] uppercase border border-amber-900 bg-amber-900/30 px-1 rounded">Maint.</span>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        </DraggablePanel>
-                    )}
-                    
-                    {/* NEW: Supply Chain Panel */}
-                    {!minimizedPanels.has('supply_chain') && !pinnedPanels.has('supply_chain') && (
-                        <DraggablePanel id="supply_chain" title={PANEL_CONFIG['supply_chain']?.title}
-                            key={`supply_chain_${layoutKey}`} 
-                            initialX={panelPositions['supply_chain']?.x ?? (window.innerWidth - 300)} 
-                            initialY={panelPositions['supply_chain']?.y ?? 700} 
-                            className="w-auto pointer-events-auto"
-                            zIndex={getZIndex('supply_chain')}
-                            onInteract={() => bringToFront('supply_chain')}
-                        >
-                            <div className="bg-slate-900/90 backdrop-blur border border-indigo-500/30 p-3 rounded-lg shadow-xl relative group pointer-events-auto w-64">
-                                <div className="absolute top-1 right-1 z-20 flex gap-1">
-                                    <button onClick={() => pinPanel('supply_chain')} className="p-1 bg-slate-900/50 rounded hover:bg-slate-800 text-slate-400 hover:text-cyan-400" title="Pin"><MapPinIcon className="w-3 h-3" /></button>
-                                    <button onClick={() => toggleMinimize('supply_chain')} className="p-1 bg-slate-900/50 rounded hover:bg-slate-800 text-slate-400 hover:text-white"><MinusIcon className="w-3 h-3" /></button>
-                                </div>
-                                <h3 className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest mb-2 flex items-center gap-1">
-                                    <TruckIcon className="w-3 h-3 text-indigo-500" /> Supply Chain
-                                </h3>
-                                <div className="text-xs text-slate-300 mb-3">
-                                    {supplyChainInsights.length > 0 ? `${supplyChainInsights.length} Risks Identified` : "No active analysis."}
-                                </div>
-                                <button 
-                                    onClick={() => { setShowSupplyChainModal(true); if (supplyChainInsights.length === 0) handleRunSupplyChainAnalysis(); }} 
-                                    className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-xs font-bold transition-colors flex items-center justify-center gap-2"
-                                >
-                                    {supplyChainInsights.length > 0 ? "View Details" : "Run Analysis"}
-                                </button>
-                            </div>
-                        </DraggablePanel>
-                    )}
-                    
-                    {/* NEW: Reporting Panel */}
-                    {!minimizedPanels.has('reporting') && !pinnedPanels.has('reporting') && (
-                        <DraggablePanel id="reporting" title={PANEL_CONFIG['reporting']?.title}
-                            key={`reporting_${layoutKey}`} 
-                            initialX={panelPositions['reporting']?.x ?? (window.innerWidth - 300)} 
-                            initialY={panelPositions['reporting']?.y ?? 250} 
-                            className="w-auto pointer-events-auto"
-                            zIndex={getZIndex('reporting')}
-                            onInteract={() => bringToFront('reporting')}
-                        >
-                            <div className="bg-slate-900/90 backdrop-blur border border-slate-700 p-3 rounded-lg shadow-xl relative group pointer-events-auto w-64">
-                                <div className="absolute top-1 right-1 z-20 flex gap-1">
-                                    <button onClick={() => pinPanel('reporting')} className="p-1 bg-slate-900/50 rounded hover:bg-slate-800 text-slate-400 hover:text-cyan-400" title="Pin"><MapPinIcon className="w-3 h-3" /></button>
-                                    <button onClick={() => toggleMinimize('reporting')} className="p-1 bg-slate-900/50 rounded hover:bg-slate-800 text-slate-400 hover:text-white"><MinusIcon className="w-3 h-3" /></button>
-                                </div>
-                                <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-1">
-                                    <PrinterIcon className="w-3 h-3" /> Reporting Center
-                                </h3>
-                                
-                                {activeScenarios.length === 0 ? (
-                                    <div className="text-xs text-red-300 bg-red-900/20 border border-red-500/20 p-2 rounded text-center">
-                                        <p className="font-bold">System Nominal</p>
-                                        <p className="text-[10px] mt-1 opacity-70">No active incidents or scenarios to report on.</p>
-                                    </div>
-                                ) : (
-                                    <div>
-                                        <div className="text-xs text-slate-300 mb-2">
-                                            {activeScenarios.length} active scenario(s) selected. 
-                                            {generatedScript ? ' Report ready for print.' : ' Generate report to enable printing.'}
-                                        </div>
-                                        <button 
-                                            onClick={handlePrintReport} 
-                                            className="w-full py-2 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs font-bold transition-colors flex items-center justify-center gap-2"
-                                        >
-                                            <PrinterIcon className="w-4 h-4" />
-                                            {generatedScript ? 'Print / Preview Report' : 'Generate & Print'}
-                                        </button>
-                                    </div>
-                                )}
-                            </div>
-                        </DraggablePanel>
-                    )}
-
-                    {/* Right Panel Group (Separated Panels) */}
-                    
-                    {/* 1. Scenario Active Stats Panel (Only visible when running) */}
-                    {activeScenarios.length > 0 && !minimizedPanels.has('scenario_stats') && !pinnedPanels.has('scenario_stats') && (
-                        <DraggablePanel id="scenario_stats" title={PANEL_CONFIG['scenario_stats']?.title}
-                            key={`scenario_stats_${layoutKey}`} 
-                            initialX={panelPositions['scenario_stats']?.x ?? (window.innerWidth - 480)} 
-                            initialY={panelPositions['scenario_stats']?.y ?? 16} 
-                            className="w-auto pointer-events-auto"
-                            zIndex={getZIndex('scenario_stats')}
-                            onInteract={() => bringToFront('scenario_stats')}
-                        >
-                            <div className={`bg-slate-900/95 backdrop-blur border ${isGrowthMode ? 'border-green-500/50' : 'border-red-500/50'} p-4 rounded-lg shadow-xl animate-fadeIn transition-all duration-300 relative ${chartMode === 'minimal' ? 'w-64' : chartMode === 'hidden' ? 'w-80' : 'w-[450px]'}`}>
-                                <div className="absolute top-2 right-2 flex gap-1">
-                                    <button onClick={() => pinPanel('scenario_stats')} className="text-slate-500 hover:text-cyan-400" title="Pin to top"><MapPinIcon className="w-3.5 h-3.5" /></button>
-                                    <button onClick={() => toggleMinimize('scenario_stats')} className="text-slate-500 hover:text-white"><MinusIcon className="w-4 h-4" /></button>
-                                </div>
-                                <div className="flex justify-between items-start mb-2 pr-12">
-                                    <div className="flex items-center gap-2">
-                                        <h2 className={`text-sm font-bold ${isGrowthMode ? 'text-green-400' : 'text-red-400'} uppercase tracking-widest animate-pulse truncate max-w-[120px]`}>
-                                            {statusLabel}
-                                        </h2>
-                                    </div>
-                                    <div className="flex items-center gap-2 shrink-0">
-                                        {/* Audio Report Button Restore */}
-                                        <button 
-                                            onClick={handleGenerateReport} 
-                                            className="text-cyan-400 hover:text-white transition-colors"
-                                            title="Generate Audio Briefing"
-                                        >
-                                            <SpeakerWaveIcon className="w-4 h-4" />
-                                        </button>
-                                        <div className="h-4 w-px bg-slate-700 mx-1"></div>
-                                        <button onClick={cycleChartMode} className="text-slate-500 hover:text-white" title="Toggle View Mode">
-                                            {chartMode === 'hidden' ? <ArrowsPointingOutIcon className="w-4 h-4" /> : 
-                                             chartMode === 'minimal' ? <ArrowsPointingOutIcon className="w-4 h-4 rotate-45" /> : 
-                                             <ArrowsPointingInIcon className="w-4 h-4" />}
-                                        </button>
-                                        <button onClick={handleResetSystem} className="text-slate-500 hover:text-white"><XMarkIcon className="w-4 h-4" /></button>
-                                    </div>
-                                </div>
-
-                                {chartMode !== 'hidden' && (
-                                    <>
-                                        <h1 className={`font-bold text-white leading-tight mb-1 truncate ${chartMode === 'minimal' ? 'text-sm' : 'text-xl'}`}>
-                                            {activeScenarios.length > 1 ? `Composite Event` : activeScenarios[0].name}
-                                        </h1>
-                                        {chartMode === 'normal' && (
-                                            <p className="text-xs text-slate-400 mb-4 line-clamp-2">
-                                                {activeScenarios.length > 1 ? activeScenarios.map(s => s.name).join(", ") : activeScenarios[0].description}
-                                            </p>
-                                        )}
-                                        
-                                        <div className={`grid gap-2 mb-2 ${chartMode === 'minimal' ? 'grid-cols-1' : 'grid-cols-2'}`}>
-                                            <div className="bg-slate-800 p-2 rounded flex justify-between items-center">
-                                                <div className="text-[10px] text-slate-500 uppercase">{metricLabel}</div>
-                                                <div className="text-base font-mono font-bold text-white">
-                                                    {(currentStats.consumers || 0).toLocaleString()}
-                                                </div>
-                                            </div>
-                                            {(chartMode === 'normal' || chartMode === 'minimal') && (
-                                                <div className="bg-slate-800 p-2 rounded flex justify-between items-center">
-                                                    <div className="text-[10px] text-slate-500 uppercase">{costLabel}</div>
-                                                    <div className={`text-base font-mono font-bold ${isGrowthMode ? 'text-green-400' : 'text-yellow-500'}`}>
-                                                        {isGrowthMode ? 'not modelled' : `£${(currentStats.cost || 0).toFixed(1)}m`}
-                                                    </div>
-                                                </div>
-                                            )}
-                                        </div>
-                                        
-                                        {chartMode === 'normal' && !isGrowthMode && (
-                                            <details className="text-[10px] text-slate-400 mb-1">
-                                                <summary className="cursor-pointer hover:text-white">{timeline[currentDay]?.label || ''} · How these figures are worked out</summary>
-                                                <div className="mt-1 space-y-1">
-                                                    <div>{methodNote}</div>
-                                                    {activeScenarios.map(sc => <div key={sc.id}><b className="text-slate-300">{sc.name}:</b> {sc.rationale || 'No sourced model; a simple default shape is used.'}</div>)}
-                                                    <div className="text-slate-500">Energy not supplied so far: {(timeline[currentDay]?.energyUnservedMWh || 0).toLocaleString()} MWh. All values: Help → Scenario model.</div>
-                                                </div>
-                                            </details>
-                                        )}
-                                        {chartMode === 'normal' && (
-                                            <div className="w-full relative mt-2 animate-slideDown h-48">
-                                                <ImpactChart 
-                                                    data={timeline} 
-                                                    currentDay={currentDay} 
-                                                    onPointClick={setSelectedPointInfo}
-                                                />
-                                            </div>
-                                        )}
-                                    </>
-                                )}
-                            </div>
-                        </DraggablePanel>
-                    )}
-
-                    {/* NEW: Standby Capacity Panel (Independent) */}
-                    {!minimizedPanels.has('standby_list') && !pinnedPanels.has('standby_list') && (
-                        <DraggablePanel id="standby_list" title={PANEL_CONFIG['standby_list']?.title}
-                            key={`standby_list_${layoutKey}`} 
-                            initialX={panelPositions['standby_list']?.x ?? (window.innerWidth - 300)} 
-                            initialY={panelPositions['standby_list']?.y ?? 560} 
-                            className="w-auto pointer-events-auto"
-                            zIndex={getZIndex('standby_list')}
-                            onInteract={() => bringToFront('standby_list')}
-                        >
-                             <div className="bg-slate-900/90 backdrop-blur border border-slate-700 p-3 rounded-lg shadow-xl relative group pointer-events-auto w-64">
-                                <div className="absolute top-1 right-1 z-20 flex gap-1">
-                                    <button onClick={() => pinPanel('standby_list')} className="p-1 bg-slate-900/50 rounded hover:bg-slate-800 text-slate-400 hover:text-cyan-400" title="Pin"><MapPinIcon className="w-3 h-3" /></button>
-                                    <button onClick={() => toggleMinimize('standby_list')} className="p-1 bg-slate-900/50 rounded hover:bg-slate-800 text-slate-400 hover:text-white"><MinusIcon className="w-3 h-3" /></button>
-                                </div>
-                                <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2 flex items-center gap-1">
-                                    <PauseCircleIcon className="w-3 h-3" /> Standby Capacity
-                                </h3>
-                                <div className="max-h-32 overflow-y-auto custom-scrollbar space-y-1">
-                                    {standbyAssets.length === 0 ? (
-                                        <div className="text-[9px] text-slate-600 italic">No assets on standby.</div>
-                                    ) : (
-                                        standbyAssets.map(asset => (
-                                            <div 
-                                                key={asset.id} 
-                                                onClick={() => { setSelectedAsset(asset); setMapCenterOverride({ lat: asset.lat, lng: asset.lng, zoom: 14 }); }}
-                                                className="flex justify-between text-[10px] hover:bg-slate-800 rounded px-1 cursor-pointer group"
-                                            >
-                                                <span className="text-slate-300 truncate w-48 group-hover:text-white">{asset.name}</span>
-                                                <span className="text-slate-500 font-mono">{asset.capacityMW}MW</span>
-                                            </div>
-                                        ))
-                                    )}
-                                </div>
-                             </div>
-                        </DraggablePanel>
-                    )}
-
-                    {/* 3. Chat Panel (Independent & Movable) */}
-                    {showChat && !minimizedPanels.has('chat') && !pinnedPanels.has('chat') && (
-                        <DraggablePanel id="chat" title={PANEL_CONFIG['chat']?.title}
-                            key={`chat_${layoutKey}`} 
-                            initialX={panelPositions['chat']?.x ?? (window.innerWidth - 420)} 
-                            initialY={panelPositions['chat']?.y ?? (window.innerHeight - 600)} 
-                            className="w-auto pointer-events-auto"
-                            zIndex={getZIndex('chat')}
-                            onInteract={() => bringToFront('chat')}
-                        >
-                            <div className="w-96 h-[500px] shadow-2xl rounded-2xl overflow-hidden backdrop-blur-md relative">
-                                <div className="absolute top-4 right-4 z-50 flex gap-1">
-                                    <button onClick={() => pinPanel('chat')} className="text-slate-400 hover:text-cyan-400" title="Pin to top"><MapPinIcon className="w-4 h-4" /></button>
-                                    <button onClick={() => toggleMinimize('chat')} className="text-slate-400 hover:text-white"><MinusIcon className="w-5 h-5" /></button>
-                                </div>
-                                 <ChatPanel 
-                                    isOpen={true} 
+                    <div className="flex-1 flex flex-col min-w-0">
+                        <div ref={mapAreaRef} className="flex-1 relative min-h-0 overflow-hidden">
+                            <div className="absolute inset-0 z-0">
+                                <MapVisualization
+                                    region={activeRegion}
+                                    assets={assets}
+                                    outages={liveOutages}
+                                    historicalOutages={showHistorical ? historicalOutages : []}
                                     activeScenarios={activeScenarios}
-                                    assetCount={assets.length} 
-                                    regionName={activeRegion.name}
-                                    nesoData={nesoData}
-                                    outages={[...liveOutages, ...(showHistorical ? historicalOutages : [])]}
-                                    onMapAction={handleMapAction}
-                                    generationMix={generationMix}
-                                    systemWarningsSummary={systemWarnings.length ? systemWarnings.slice(0, 5).map(w => `${w.type} (${w.published}): ${w.text.slice(0, 200)}`).join(' | ') : ''}
-                                    liveSystemsSummary={[
-                                        icFlows.length ? `Interconnector flows (MW, +import/-export): ${icFlows.map(f => `${f.name} ${f.mw}`).join(', ')}` : '',
-                                        gas ? `Gas NTS: demand ${gas.ntsDemand} mcm/d, supply ${gas.totalSupply} mcm/d, linepack ${gas.linepack} mcm, to power stations ${gas.powerStations} mcm/d` : '',
-                                        energyFlows.hasGasDetail ? `Gas by route (mcm/d, +into GB/-out): ${energyFlows.links.filter(l => l.kind === 'gas').map(l => `${l.name} [${l.group}] ${l.value}`).join(', ')}. Imports (Norway pipeline + LNG + continent) ≈ ${energyFlows.gasImportShare !== null ? Math.round(energyFlows.gasImportShare * 100) : '?'}% of supply; St Fergus is mixed UK/Norway. Energy equivalents: electricity in ${energyFlows.elecImportGW.toFixed(1)} GW / out ${energyFlows.elecExportGW.toFixed(1)} GW; gas imported ${energyFlows.gasImportGW.toFixed(0)} GW (at 39.5 MJ/m3)` : '',
-                                        `Met Office warnings: ${weatherWarnings.length ? weatherWarnings.map(w => `${w.level} ${w.type} - ${w.region}`).join('; ') : 'none'}`,
-                                        floods ? `EA flood warnings (England): ${floods.warnings.length} warnings (${floods.warnings.filter(w => w.level === 1).length} severe), ${floods.alerts} alerts${floods.warnings.length ? ': ' + floods.warnings.slice(0, 8).map(w => w.area).join('; ') : ''}` : '',
-                                        Object.keys(regionalCarbon).length ? `Regional carbon intensity (gCO2/kWh): ${Object.entries(regionalCarbon).map(([k, v]) => `${k} ${v.intensity}`).join(', ')}` : '',
-                                    ].filter(Boolean).join('\n- ')}
-                                    generatorOutagesSummary={generatorOutages.length ? `${generatorOutages.length} active notices, ${Math.round(generatorOutages.reduce((a, g) => a + g.unavailableMW, 0))} MW unavailable in total (${Math.round(generatorOutages.filter(g => !g.planned).reduce((a, g) => a + g.unavailableMW, 0))} MW unplanned). Largest: ${generatorOutages.slice(0, 8).map(g => `${g.siteName || g.unit} ${g.unit} ${g.fuelType} ${Math.round(g.unavailableMW)}MW ${g.planned ? 'planned' : 'UNPLANNED'} (${g.cause})`).join('; ')}` : ''}
-                                    timelineNow={activeScenarios.length > 0 && timeline[currentDay] ? `day ${currentDay}: ${timeline[currentDay].consumersOffline.toLocaleString()} customers off supply, ${timeline[currentDay].restorationPct}% restored, est. cost £${timeline[currentDay].costMillions}m` : ''}
+                                    dnoRegions={memoizedDnoRegions}
+                                    day={currentDay}
+                                    filters={visibleLayers}
+                                    onAssetSelect={setSelectedAsset}
+                                    onViewChange={handleViewChange}
+                                    currentImpact={timeline[currentDay]?.consumersOffline || 0}
+                                    peakImpact={Math.max(...timeline.map(t => t.consumersOffline)) || 1}
+                                    viewOverride={mapCenterOverride}
+                                    isScenarioComplete={isScenarioComplete}
+                                    generatorOutages={generatorOutages}
+                                    interconnectorFlows={icFlows}
+                                    energyFlows={energyFlows.links}
+                                    regionalCarbon={regionalCarbon}
+                                    floodWarnings={floods?.warnings || []}
+                                    weatherWarnings={weatherWarnings}
                                 />
                             </div>
-                        </DraggablePanel>
-                    )}
-
-                    {/* Generation List Modal - Draggable */}
-                    {showGenList && (
-                        <DraggablePanel id="gen_list" title="Generation"
-                            key={'gen_list_' + layoutKey} 
-                            initialX={window.innerWidth - 750} 
-                            initialY={200} 
-                            className="w-auto pointer-events-auto"
-                            zIndex={getZIndex('gen_list')}
-                            onInteract={() => bringToFront('gen_list')}
-                        >
-                            <GenerationListPanel 
-                                title={showGenList === 'Renewables' ? 'Renewable Generators' : 'Fossil Fuel Generators'}
-                                assets={generationListAssets}
-                                onClose={() => setShowGenList(null)}
-                                onSelectAsset={(a) => { setSelectedAsset(a); setMapCenterOverride({ lat: a.lat, lng: a.lng, zoom: 14 }); }}
-                            />
-                        </DraggablePanel>
-                    )}
-
-                    {/* Dock for Minimized Panels - REORGANIZED to grid 5 cols */}
-                    {layoutMode !== 'phone' && (minimizedPanels.size > 0 || (showChat && minimizedPanels.has('chat'))) && (
-                        <DraggablePanel id="dock" title="Tools" key={`dock_${layoutKey}`} initialX={90} initialY={window.innerHeight - 190} zIndex={400} resizable={false}>
-                        <div className="bg-slate-900/80 backdrop-blur border border-slate-700 p-2 rounded-xl animate-slideUp grid grid-cols-5 gap-2 shadow-2xl" title="Drag the dock to move it">
-                            {/* Infrastructure */}
-                            {minimizedPanels.has('infra') && (
-                                <button onClick={() => restorePanel('infra')} className="p-2 hover:bg-slate-800 rounded text-slate-400 hover:text-white" title="Infrastructure Filter">
-                                    <FunnelIcon className="w-6 h-6" />
-                                </button>
+                            <button type="button" onClick={handleHomeView} title="Reset map view" aria-label="Reset map view"
+                                className="absolute top-3 left-3 z-10 bg-slate-950/90 border border-slate-700 w-10 h-10 rounded-lg shadow-xl hover:bg-slate-800 text-slate-300 hover:text-white flex items-center justify-center">
+                                <MapIcon className="w-5 h-5" />
+                            </button>
+                            {selectedAsset && (
+                                <AssetDetails asset={selectedAsset} regionName={activeRegion.name} onClose={() => setSelectedAsset(null)} />
                             )}
-                            {/* Data Sync (New) */}
-                            {minimizedPanels.has('data_sync') && (
-                                <button onClick={() => restorePanel('data_sync')} className="p-2 hover:bg-slate-800 rounded text-cyan-400 hover:text-white" title="Data Synchronization">
-                                    <ArrowPathIcon className="w-6 h-6" />
-                                </button>
+                            {/* Popped-out windows float over the map only, never over the top bar or timeline */}
+                            {layoutMode !== 'phone' && (
+                                <div className="absolute inset-0 pointer-events-none z-20">
+                                    {windowDefs.filter(d => d.modes.includes(appMode) && win.stateOf(d.id) === 'floating').map(d => (
+                                        <FloatingWindow key={d.id} def={d} win={win} container={mapAreaRef} />
+                                    ))}
+                                </div>
                             )}
-                            {/* Scenarios (New) */}
-                            {minimizedPanels.has('scenarios_pane') && (
-                                <button onClick={() => restorePanel('scenarios_pane')} className="p-2 hover:bg-slate-800 rounded text-red-400 hover:text-white" title="Scenarios">
-                                    <PlayIcon className="w-6 h-6" />
-                                </button>
-                            )}
-                            {minimizedPanels.has('live_systems') && (
-                                <button onClick={() => restorePanel('live_systems')} className="p-2 hover:bg-slate-800 rounded text-cyan-400 hover:text-white" title="Live Systems">
-                                    <SignalIcon className="w-6 h-6" />
-                                </button>
-                            )}
-                            {minimizedPanels.has('flows') && (
-                                <button onClick={() => restorePanel('flows')} className="p-2 hover:bg-slate-800 rounded text-amber-400 hover:text-white" title="Energy flows in and out of GB">
-                                    <ArrowsRightLeftIcon className="w-6 h-6" />
-                                </button>
-                            )}
-                             {minimizedPanels.has('grid_status') && (
-                                <button onClick={() => restorePanel('grid_status')} className="p-2 hover:bg-slate-800 rounded text-slate-400 hover:text-white" title="Grid Status">
-                                    <ExclamationTriangleIcon className="w-6 h-6" />
-                                </button>
-                            )}
-                             {minimizedPanels.has('system_monitor') && (
-                                <button onClick={() => restorePanel('system_monitor')} className="p-2 hover:bg-slate-800 rounded text-slate-400 hover:text-white" title="System Monitor">
-                                    <ShieldCheckIcon className="w-6 h-6" />
-                                </button>
-                            )}
-                            {minimizedPanels.has('standby_list') && (
-                                <button onClick={() => restorePanel('standby_list')} className="p-2 hover:bg-slate-800 rounded text-slate-400 hover:text-white" title="Standby Capacity">
-                                    <PauseCircleIcon className="w-6 h-6" />
-                                </button>
-                            )}
-                             {minimizedPanels.has('engineering_work') && maintenanceAssets.length > 0 && (
-                                <button onClick={() => restorePanel('engineering_work')} className="p-2 hover:bg-slate-800 rounded text-slate-400 hover:text-white" title="Engineering Work">
-                                    <WrenchScrewdriverIcon className="w-6 h-6" />
-                                </button>
-                            )}
-                             {activeScenarios.length > 0 && minimizedPanels.has('scenario_stats') && (
-                                <button onClick={() => restorePanel('scenario_stats')} className="p-2 hover:bg-slate-800 rounded text-slate-400 hover:text-white" title="Scenario Stats">
-                                    <VideoCameraIcon className="w-6 h-6" />
-                                </button>
-                            )}
-                             {minimizedPanels.has('chat') && (
-                                <button onClick={() => restorePanel('chat')} className="p-2 hover:bg-slate-800 rounded text-cyan-400 hover:text-white" title="Analyst AI">
-                                    <ChatBubbleLeftRightIcon className="w-6 h-6" />
-                                </button>
-                            )}
-                            {minimizedPanels.has('supply_chain') && (
-                                <button onClick={() => restorePanel('supply_chain')} className="p-2 hover:bg-slate-800 rounded text-indigo-400 hover:text-white" title="Supply Chain">
-                                    <TruckIcon className="w-6 h-6" />
-                                </button>
-                            )}
-                            {minimizedPanels.has('reporting') && (
-                                <button onClick={() => restorePanel('reporting')} className="p-2 hover:bg-slate-800 rounded text-slate-400 hover:text-white" title="Reporting Center">
-                                    <PrinterIcon className="w-6 h-6" />
-                                </button>
-                            )}
-                            {/* Reset (New) */}
-                            {minimizedPanels.has('reset_view') && (
-                                <button onClick={() => restorePanel('reset_view')} className="p-2 hover:bg-slate-800 rounded text-slate-400 hover:text-white" title="Reset View">
-                                    <StopCircleIcon className="w-6 h-6 text-red-600" />
-                                </button>
+                            {layoutMode !== 'phone' && <MinimisedTray defs={windowDefs} mode={appMode} win={win} />}
+                            {layoutMode === 'tablet' && overlayPanel && (
+                                <SidePanel defs={windowDefs} mode={appMode} win={win} overlay onClose={() => setOverlayPanel(null)} />
                             )}
                         </div>
-                        </DraggablePanel>
-                    )}
-                    
-                </main>
-                
-                {/* Phone: tab bar that opens panels as a bottom sheet */}
+                        {appMode === 'scenarios' && activeScenarios.length > 0 && timeline.length > 0 && (
+                            <div className="flex-none border-t border-slate-800">
+                                <TimelineControl
+                                    currentDay={currentDay}
+                                    totalDays={timeline.length - 1}
+                                    labels={timeline.map(t => t.label || `Day ${t.day}`)}
+                                    isPlaying={isPlaying}
+                                    playbackSpeed={playbackSpeed}
+                                    onPlayPause={() => setIsPlaying(!isPlaying)}
+                                    onSeek={setCurrentDay}
+                                    onSpeedChange={setPlaybackSpeed}
+                                />
+                            </div>
+                        )}
+                    </div>
+                    {layoutMode === 'desktop' && <SidePanel defs={windowDefs} mode={appMode} win={win} />}
+                </div>
+
                 {layoutMode === 'phone' && (
-                    <nav className="fixed inset-x-0 bottom-0 z-[460] h-14 bg-slate-950/95 backdrop-blur border-t border-slate-800 flex justify-around items-stretch" aria-label="Panels">
-                        {[
-                            ['system_monitor', 'Grid', ShieldCheckIcon],
-                            ['grid_status', 'Outages', ExclamationTriangleIcon],
-                            ['live_systems', 'Live', SignalIcon],
-                            ['flows', 'Flows', ArrowsRightLeftIcon],
-                            ['infra', 'Layers', FunnelIcon],
-                            ['scenarios_pane', 'Risks', PlayIcon],
-                            ['chat', 'Analyst', ChatBubbleLeftRightIcon],
-                        ].map(([pid, label, Icon]: any) => (
-                            <button
-                                key={pid}
-                                onClick={() => {
-                                    if (activeSheet === pid) { setActiveSheet(null); return; }
-                                    if (minimizedPanels.has(pid)) restorePanel(pid);
-                                    if (pinnedPanels.has(pid)) unpinPanel(pid);
-                                    if (pid === 'chat') setShowChat(true);
-                                    setActiveSheet(pid);
-                                }}
-                                className={`flex-1 flex flex-col items-center justify-center gap-0.5 text-[10px] font-bold ${activeSheet === pid ? 'text-cyan-400 bg-slate-900' : 'text-slate-400'}`}
-                                aria-pressed={activeSheet === pid}
-                            >
-                                <Icon className="w-5 h-5" />
-                                {label}
-                            </button>
-                        ))}
-                    </nav>
+                    <>
+                        <PhoneSheet def={windowDefs.find(d => d.id === activeSheet && d.modes.includes(appMode)) || null} onClose={() => setActiveSheet(null)} />
+                        <PhoneTabs defs={windowDefs} mode={appMode} active={activeSheet} onPick={setActiveSheet} />
+                    </>
                 )}
 
                 {/* Modals and Overlays */}
                 {historyModalMetric && (
-                    <GridHistoryModal 
-                        metric={historyModalMetric} 
-                        onClose={() => setHistoryModalMetric(null)} 
+                    <GridHistoryModal
+                        metric={historyModalMetric}
+                        onClose={() => setHistoryModalMetric(null)}
                     />
-                )}
-
-                {activeScenarios.length > 0 && chartMode !== 'hidden' && !minimizedPanels.has('scenario_stats') && !pinnedPanels.has('scenario_stats') && (
-                    <div className="flex-none z-40 relative animate-slideUp">
-                        <TimelineControl 
-                            currentDay={currentDay} 
-                            totalDays={timeline.length - 1} 
-                            labels={timeline.map(t => t.label || `Day ${t.day}`)}
-                            isPlaying={isPlaying} 
-                            playbackSpeed={playbackSpeed}
-                            onPlayPause={() => setIsPlaying(!isPlaying)} 
-                            onSeek={setCurrentDay}
-                            onSpeedChange={setPlaybackSpeed}
-                        />
-                    </div>
                 )}
             </div>
 
@@ -2227,7 +1586,7 @@ export const App: React.FC = () => {
             {showScenarioManager && (
                 <ScenarioManager 
                     scenarios={scenarios}
-                    onRunSimulation={handleRunSimulation}
+                    onRunSimulation={(sel) => runScenarios(sel)}
                     onUpdateScenarios={setScenarios}
                     onClose={() => setShowScenarioManager(false)}
                     onGenerateMore={handleGenerateMoreScenarios}
@@ -2265,6 +1624,19 @@ export const App: React.FC = () => {
             )}
 
             {showAiKey && <AiKeyModal onClose={() => setShowAiKey(false)} />}
+
+            {showReport && (
+                <ReportBuilder
+                    initialKind={appMode === 'scenarios' && activeScenarios.length ? 'scenario' : 'live'}
+                    onClose={() => setShowReport(false)}
+                    onVideo={() => { setShowReport(false); handleVideoBriefing(); }}
+                    aiEnabled={aiEnabled}
+                    onNeedAi={() => setShowAiKey(true)}
+                    neso={nesoData} mix={generationMix} flows={energyFlows} gas={gas}
+                    outages={liveOutages} generatorOutages={generatorOutages} warnings={systemWarnings} weather={weatherWarnings}
+                    scenarios={activeScenarios} timeline={timeline} step={currentDay}
+                />
+            )}
 
             {/* Consolidated Help Modal (Restores Missing Data) */}
             {showHelp && (

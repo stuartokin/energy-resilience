@@ -52,9 +52,10 @@ interface ChatPanelProps {
     generatorOutagesSummary?: string;
     liveSystemsSummary?: string;
     systemWarningsSummary?: string;
+    embedded?: boolean; // inside a standard window: no own header or border
 }
 
-const ChatPanel: React.FC<ChatPanelProps> = ({ isOpen, activeScenarios, assetCount, regionName, nesoData, outages, onMapAction, generationMix, timelineNow, generatorOutagesSummary, liveSystemsSummary, systemWarningsSummary }) => {
+const ChatPanel: React.FC<ChatPanelProps> = ({ isOpen, activeScenarios, assetCount, regionName, nesoData, outages, onMapAction, generationMix, timelineNow, generatorOutagesSummary, liveSystemsSummary, systemWarningsSummary, embedded }) => {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
     
@@ -141,9 +142,9 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ isOpen, activeScenarios, assetCou
     if (!isOpen) return null;
 
     return (
-        <div className="w-full h-full flex flex-col overflow-hidden bg-slate-900 border border-cyan-500/50 rounded-2xl shadow-2xl backdrop-blur-md">
+        <div className={`w-full h-full flex flex-col overflow-hidden bg-slate-900 ${embedded ? '' : 'border border-cyan-500/50 rounded-2xl shadow-2xl backdrop-blur-md'}`}>
             {/* Header */}
-            <div className="p-4 bg-slate-950 border-b border-slate-800 flex justify-between items-center shrink-0 cursor-move" id="chat-header">
+            <div className={`${embedded ? 'hidden' : ''} p-4 bg-slate-950 border-b border-slate-800 flex justify-between items-center shrink-0 cursor-move`} id="chat-header">
                 <div className="flex items-center gap-2 text-cyan-400">
                     <SparklesIcon className="w-5 h-5" />
                     <h3 className="font-bold text-sm">Analyst AI</h3>

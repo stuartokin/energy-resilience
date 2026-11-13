@@ -107,3 +107,13 @@ html { font-size: var(--ui-font-size, 16px); }
 .maplibregl-ctrl-attrib { background: rgba(15,23,42,0.8) !important; color: #64748b; font-size: 10px; }
 .maplibregl-ctrl-attrib a { color: #94a3b8 !important; }
 .maplibregl-ctrl-attrib-button { filter: invert(1); }
+
+/* Report builder: print only the report */
+@media print {
+  #root { display: none !important; }
+  body { background: #fff !important; }
+  .report-print { position: static !important; overflow: visible !important; background: #fff !important; inset: auto !important; }
+  .report-page { max-width: none !important; margin: 0 !important; }
+  .break-inside-avoid { break-inside: avoid; }
+  @page { size: A4; margin: 16mm; }
+}

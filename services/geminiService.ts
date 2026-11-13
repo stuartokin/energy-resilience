@@ -1420,7 +1420,8 @@ export const generateVideoReportScript = async (scenario: RiskScenario) => {
         **PROJECTED IMPACT**
         [Quantitative summary: ${scenario.peakConsumersAffected} consumers offline, ${scenario.durationDays} days duration. Mention cascading effects.]
         
-        Details from System: ${scenario.narrative}.
+        Details from System: ${scenario.narrative}. ${scenario.rationale ? `How the figures were reached: ${scenario.rationale}` : ''}
+        Do not invent statistics beyond those given here; if you mention other facts, say they are general context.
     `;
     
     try {
@@ -1433,6 +1434,22 @@ export const generateVideoReportScript = async (scenario: RiskScenario) => {
         handleApiError(e);
         return ""; 
     }
+};
+
+// Report text (Report builder). The model only rewrites the facts it is given; figures come from the app.
+export const generateReportText = async (kind: 'summary' | 'mitigations', facts: string): Promise<string> => {
+    if (!aiClient) initGenAI();
+    if (!aiClient) return '';
+    const task = kind === 'summary'
+        ? 'Write an executive summary of 120-180 words in plain British English for a senior reader. Use ONLY the facts below; do not add any new numbers. Say clearly that scenario figures are modelled, not forecasts, where relevant.'
+        : 'List 4-6 practical mitigations or preparedness actions, one short paragraph each, in plain British English. Keep them generic: do not name equipment suppliers or specific sites. Do not add numbers that are not in the facts. Start each with a short bold-free heading followed by a colon.';
+    try {
+        const response = await aiClient.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: [{ parts: [{ text: `${task}\n\nFACTS:\n${facts}` }] }],
+        });
+        return cleanText(response.text || '');
+    } catch (e) { handleApiError(e); return ''; }
 };
 
 export const generateNarratedAudio = async (script: string) => {

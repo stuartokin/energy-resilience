@@ -6,6 +6,20 @@ export interface ChangeEntry { version: string; date: string; title: string; cha
 
 export const CHANGELOG: ChangeEntry[] = [
     {
+        version: '4.0.0',
+        date: '2026-11-13',
+        title: 'New layout: Live and Scenarios modes, standard windows, report builder',
+        changes: [
+            'Two modes in the top bar. Live shows the system now and over time; Scenarios is for choosing risks, running them together and seeing the impact. The map keeps showing infrastructure, interconnectors and energy flows in both.',
+            'Every panel is now a standard window: a tab in the right-hand panel by default, which you can pop out to float over the map, move, resize, change text size, minimise or dock back. Layout is remembered in this browser; Reset layout puts everything back.',
+            'New windows: Overview (headline figures with sources), Electricity (mix, history, regional carbon), Outages (by network, largest cuts, generator outages), Scenario library (filters, "Why these numbers?", a basket that shows the combined peak before you run), Results and Model.',
+            'The timeline now sits under the map in Scenarios mode, so it no longer covers panels.',
+            'Create report (top bar): choose a live-system or scenario report, pick sections, add a byline, and print or save it as a PDF. Optional AI summary and mitigations are labelled; figures always come from the data and the model.',
+            'Video briefing and Analyst AI are always one click away in the top bar. Phones get a tab bar and bottom sheet; tablets and unfolded Folds get a panel that slides over the map.',
+            'Fix: frequency and generator outages no longer show placeholder values before data has loaded.',
+        ],
+    },
+    {
         version: '3.6.0',
         date: '2026-11-12',
         title: 'Filling the gaps: planning database sites and inferred connections',

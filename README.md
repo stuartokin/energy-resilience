@@ -20,7 +20,10 @@ A live picture of the GB energy system - infrastructure, power cuts, generator o
 |---|---|
 | `index.html`, `index.tsx`, `App.tsx` | The app (React + TypeScript, built with Vite). `App.tsx` holds the layout, panels and state. |
 | `components/` | Map (`MapVisualization.tsx`, MapLibre GL), panels, modals, help (`HelpModal.tsx`), live systems panel, AI key box. |
-| `components/DraggablePanel.tsx` | Every floating panel: move (mouse/touch), resize, A−/A+, saved layout; becomes a bottom sheet on phones. |
+| `components/shell/windows.tsx` | **The window system.** Every panel is a window: a tab in the side panel, popped out (floating), minimised or closed. Also the tool rail, phone tab bar and bottom sheet. |
+| `components/panels/` | Window contents: `LivePanels.tsx` (Overview, Electricity, Outages) and `ScenarioPanels.tsx` (Library, Results, Model). |
+| `components/ReportBuilder.tsx` | Create report: live or scenario report, chosen sections, print / save as PDF. |
+| `components/DraggablePanel.tsx` | Older floating-panel component, kept for reference; no longer used by the main layout. |
 | `components/layout.tsx` | Screen modes (desktop / tablet / phone), saved layout, global text size. |
 | `components/icons.ts` | The icon set, line colours by voltage, and the legend definitions. |
 | `scripts/energy-tiles.yml` | Planetiler schema: which OpenStreetMap power and gas features go into the weekly map tiles (`tiles/energy.pmtiles`), and from which zoom level. |

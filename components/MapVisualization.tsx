@@ -95,8 +95,9 @@ const circlePolygon = (lat: number, lng: number, radiusM: number) => {
 const UK_BOUNDS: [[number, number], [number, number]] = [[-8.2, 49.9], [1.8, 60.8]];
 const ukPadding = () => {
     const w = window.innerWidth;
-    if (w < 640) return { top: 20, bottom: 70, left: 10, right: 10 };
-    return { top: 30, bottom: 40, left: w >= 1024 ? 280 : 230, right: w >= 1600 ? 300 : 60 };
+    // The map now sits between the tool rail and the side panel, so only a small margin is needed
+    if (w < 640) return { top: 20, bottom: 30, left: 10, right: 10 };
+    return { top: 30, bottom: 30, left: 30, right: 30 };
 };
 
 const emptyFC = { type: 'FeatureCollection', features: [] as any[] };
@@ -381,6 +382,7 @@ const MapVisualization: React.FC<MapProps> = ({
             center: [region.lng, region.lat],
             zoom: region.zoom,
             maxZoom: 18,
+            preserveDrawingBuffer: true, // lets the report builder capture a map snapshot
             dragRotate: false,
             pitchWithRotate: false,
         });
