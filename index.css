@@ -117,3 +117,10 @@ html { font-size: var(--ui-font-size, 16px); }
   .break-inside-avoid { break-inside: avoid; }
   @page { size: A4; margin: 16mm; }
 }
+
+/* Fleet highlight for common-mode scenarios */
+.fleet-pulse { border-radius: 50%; border: 2px solid #ef4444; background: rgba(239,68,68,0.25); box-shadow: 0 0 0 0 rgba(239,68,68,0.7); animation: pulse-ring 1.6s infinite; }
+/* Scenario caption on the map */
+.er-caption { animation: er-caption-in 0.4s ease-out; }
+@keyframes er-caption-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .fleet-pulse, .er-caption, .powercut-pulse::after { animation: none; } }

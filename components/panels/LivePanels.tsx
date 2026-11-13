@@ -5,6 +5,7 @@ import { GenerationMix, OutageEvent, GeneratorOutage, InfrastructureAsset } from
 import { GasSnapshot, SystemWarning, RegionalCarbon } from '../../services/liveSystems';
 import { FlowsSummary, fmtGW } from '../../services/flows';
 import { ChartBarIcon } from '@heroicons/react/24/solid';
+import { OUTAGE_COVERAGE } from '../../services/geminiService';
 
 export interface NesoNow { demand: number; frequency: number; carbonIntensity: number; estimated?: boolean }
 
@@ -59,7 +60,7 @@ export const OverviewPanel: React.FC<{
                 <Card label="Frequency" value={haveGrid ? `${neso.frequency.toFixed(2)} Hz` : '–'} tone={!haveGrid ? 'text-slate-400' : freqOk ? 'text-emerald-300' : 'text-red-300'} note={!haveGrid ? 'Waiting for Elexon' : neso.estimated ? 'est. (feed unavailable)' : freqOk ? 'Within normal limits' : 'Outside 49.8-50.2 Hz'} onClick={() => onHistory('frequency')} title="Frequency history" />
                 <Card label="Net electricity import" value={hasElec ? fmtGW(flows.elecImportGW - flows.elecExportGW) : '–'} tone="text-cyan-300" note={hasElec ? `${flows.elecImportGW - flows.elecExportGW >= 0 ? 'importing' : 'exporting'} · ${flows.links.filter(l => l.kind === 'electricity').length} links` : 'Elexon not answering'} onClick={() => onOpen('flows')} title="Energy flows" />
                 <Card label="Gas supply" value={gas?.totalSupply != null ? `${gas.totalSupply.toFixed(0)} mcm/d` : '–'} tone="text-amber-300" note={flows.gasImportShare !== null ? `≥${Math.round(flows.gasImportShare * 100)}% imported` : 'National Gas'} onClick={() => onOpen('flows')} title="Energy flows" />
-                <Card label="Power cuts" value={outages.length} tone={outages.length ? 'text-red-300' : 'text-emerald-300'} note={feedsLive} onClick={() => onOpen('outages')} title="Outages" />
+                <Card label="Power cuts" value={outages.length} tone={outages.length ? 'text-red-300' : 'text-slate-200'} note={<span className="text-amber-300/90">{feedsLive}</span>} onClick={() => onOpen('outages')} title="Outages" />
                 <Card label="Generator outages" value={generatorOutages.length ? `${(genOut / 1000).toFixed(1)} GW` : '–'} tone="text-orange-300" note={generatorOutages.length ? `${(genUnplanned / 1000).toFixed(1)} GW unplanned · REMIT` : 'No REMIT notices loaded'} onClick={() => onOpen('outages')} title="Outages" />
             </div>
             <div className="bg-slate-900 border border-slate-800 rounded-lg p-3">
@@ -136,7 +137,7 @@ export const OutagesPanel: React.FC<{ outages: OutageEvent[]; generatorOutages: 
                 {bySource.length === 0 ? <div className="text-[11px] text-emerald-300">No live power cuts reported by the connected feeds.</div> : bySource.map(([k, v]) => (
                     <div key={k} className="flex justify-between text-[11px] py-0.5"><span className="text-slate-300">{k}</span><span className="text-slate-400 font-mono">{v.n} · {v.customers ? v.customers.toLocaleString() : '?'} cust.</span></div>
                 ))}
-                <div className="text-[10px] text-amber-300/80 mt-2">No open live feed for North West England (Electricity North West): <a href="https://www.enwl.co.uk" target="_blank" rel="noopener noreferrer" className="underline">enwl.co.uk</a> or call 105.</div>
+                {OUTAGE_COVERAGE.filter(c => c.feed === 'none').map(c => <div key={c.id} className="text-[10px] text-amber-300/80 mt-2"><b>No live data for {c.area}</b> ({c.dno}). {c.note}</div>)}
             </div>
             {top.length > 0 && <div className="bg-slate-900 border border-slate-800 rounded-lg p-3">
                 <div className="text-[11px] font-semibold mb-1.5">Largest power cuts</div>

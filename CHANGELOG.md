@@ -3,6 +3,14 @@
 Newest first. Mirrored in the app under **Help → What's new** (`content/changelog.ts`).
 Versioning: MAJOR = big change in what the app is; MINOR = new features or data sources; PATCH = fixes.
 
+## 4.1.0 - 2026-11-13 - Scenario footprints (red haze, then lights out), data coverage, DNO lines
+- `services/footprint.ts`: scenario footprints on NESO GSP areas (`public/data/gsp-areas.json`), falling back to DNO areas. Each area = 30 million ÷ number of areas customers (labelled assumption `mapArea`); share of footprint areas dark = modelled customers off. Patterns: spread, scatter, patches, rota (3-hour blocks). Newly dark areas show red haze for about 0.65 s first. Captions from scenario `events` plus model milestones. Route resolution (`largestGas`, `largestElec`, `norway`, `lng`) against live flows, frozen at run start.
+- `types.ts`: `Footprint`, `RiskScenario.footprint`, `RiskScenario.events`. `content/scenarios.ts`: `FOOTPRINTS` and `EVENTS` maps (events only for real reference events, from the cited sources).
+- Map: `impact-areas` (feature-state haze/off), `energy-flows-cut`, fleet pulse markers, "Place it" click mode, camera fits the footprint, coverage hatch layer and labels (`Data coverage` layer), `dnolines` PMTiles layers (from zoom 8; filtered by the Transmission/Distribution toggles).
+- `scripts/build-network-extras.mjs`: builds `gsp-areas.json` (NESO, latest GSP regions file) and `tiles/dno-lines.pmtiles` + `data/dno-lines-sources.json` from operators' open-licence 33 kV+ line datasets (licence-checked; "Shared" skipped). Needs GDAL (`ogr2ogr`); **update deploy.yml** (new step).
+- Timeline: caption markers and Clear; Library: Clear and Place it; top-bar running chip; Results: normal vs scenario and map key. Playback 20 s.
+- Coverage: System Status amber for "No coverage"; Overview/Outages list networks without live data; Overpass/RainViewer show "Not needed".
+
 ## 4.0.0 - 2026-11-13 - New layout: modes, standard windows, report builder
 - `components/shell/windows.tsx`: window manager (docked / floating / minimised / closed), side panel with tabs, floating windows (drag, resize, text size), minimised tray, tool rail, phone tab bar and sheet. Layout saved in localStorage (`energy_resilience_windows_v1`).
 - `components/panels/LivePanels.tsx` (Overview, Electricity, Outages) and `components/panels/ScenarioPanels.tsx` (Library, Results, Model; Model also used in Help).

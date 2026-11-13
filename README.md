@@ -45,6 +45,8 @@ A live picture of the GB energy system - infrastructure, power cuts, generator o
 | `content/scenarios.ts` | **The scenario library.** Each scenario has a model, the reasoning for its numbers and its sources. Copy one to add a new scenario. |
 | `content/assumptions.ts` | **Every value the impact model uses**, with source or reasoning, plus reference events. Shown in Help → Scenario model. |
 | `services/impactModel.ts` | Turns a scenario into customers off supply over time, energy not supplied and cost (VoLL). No AI, no random numbers. |
+| `services/footprint.ts` | Where a running scenario shows on the map: Grid Supply Point areas, red haze then lights out, patterns, captions, routes cut. Illustrative, and labelled so. |
+| `scripts/build-network-extras.mjs` | Weekly, needs GDAL: NESO Grid Supply Point areas → `data/gsp-areas.json`; network operators' open-licence 33 kV+ lines → `network/dno-lines.pmtiles` (+ `data/dno-lines-sources.json` listing what was used). |
 | `services/flows.ts`, `components/EnergyFlowsPanel.tsx` | Electricity and gas flowing into and out of GB, by route, on one GW scale; the map arrows. |
 | `.github/workflows/deploy.yml` | Builds and publishes the site on every upload to `main`, and every Monday. |
 | `CHANGELOG.md` | Version history. |
@@ -104,7 +106,7 @@ on:
     branches: [main]
   workflow_dispatch:
   schedule:
-    - cron: '17 3 * * 1'   # every Monday 03:17 UTC: refresh the OpenStreetMap snapshot
+    - cron: '17 3 * * 1'   # every Monday 03:17 UTC: refresh the OpenStreetMap snapshot, GSP areas and DNO lines
 
 permissions:
   contents: read
@@ -157,6 +159,31 @@ jobs:
           SPEN_API_KEY: ${{ secrets.SPEN_API_KEY }}
           UKPN_API_KEY: ${{ secrets.UKPN_API_KEY }}
         timeout-minutes: 20
+
+      # ---- Grid Supply Point areas (scenario map) and network operators' own 33 kV+ lines (weekly) ----
+      - name: Install GDAL
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq gdal-bin
+        continue-on-error: true
+      - name: Reuse this week's network operator lines if already built
+        id: dnolines
+        uses: actions/cache@v4
+        with:
+          path: |
+            public/network
+            public/data/dno-lines-sources.json
+          key: dno-lines-${{ steps.week.outputs.week }}-${{ hashFiles('scripts/build-network-extras.mjs') }}
+      - name: Build Grid Supply Point areas and network operator lines
+        continue-on-error: true
+        timeout-minutes: 30
+        env:
+          SPEN_API_KEY: ${{ secrets.SPEN_API_KEY }}
+          UKPN_API_KEY: ${{ secrets.UKPN_API_KEY }}
+        run: |
+          if [ "${{ steps.dnolines.outputs.cache-hit }}" = "true" ]; then
+            node scripts/build-network-extras.mjs gsp
+          else
+            node scripts/build-network-extras.mjs
+          fi
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:

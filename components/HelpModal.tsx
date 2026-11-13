@@ -167,7 +167,19 @@ const HelpModal: React.FC<HelpModalProps> = ({ onClose, onLaunchTour, initialTab
                                         <div className="flex items-center gap-3"><span className="px-1.5 rounded border border-green-400 text-green-400 font-bold">IFA &darr;331 MW</span> Interconnector flow (green = import, orange = export)</div>
                                         <div className="flex items-center gap-3"><span className="w-4 h-4 bg-blue-600 border-2 border-white rounded-sm inline-block" /> Flood warning (red = severe)</div>
                                         <div className="flex items-center gap-3"><span className="flex gap-1"><span className="w-3 h-3 rounded-full inline-block bg-yellow-400" /><span className="w-3 h-3 rounded-full inline-block border-2 border-lime-400" /></span> Generator / battery from a DNO capacity register (filled = connected, ring = accepted, not built; size = MW). Click for the substations it connects through</div>
-                                        <div className="flex items-center gap-3"><span className="w-3 h-3 rounded-full inline-block bg-yellow-400/60 border border-slate-200" /> Renewable or storage site from the government's planning database (REPD), where no network register covers it. Click to see the substation it <i>probably</i> connects to, inferred from OpenStreetMap (labelled, may be wrong)</div>
+                                        <div className="flex items-center gap-3"><span className="w-3 h-3 rounded-full inline-block bg-yellow-400/60 border border-slate-200 shrink-0" /><span>Renewable or storage site from the government's planning database (REPD), where no network register covers it. Click to see the substation it <i>probably</i> connects to, inferred from OpenStreetMap (labelled, may be wrong)</span></div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <h4 className="font-bold text-slate-200 mb-2">Data coverage and scenarios</h4>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-slate-300">
+                                        <div className="flex items-center gap-3"><span className="w-6 h-4 border border-dashed border-amber-400 shrink-0" style={{ background: 'repeating-linear-gradient(135deg, rgba(251,191,36,0.6) 0 2px, transparent 2px 5px)' }} /> No open live power-cut feed (North West England, Northern Ireland): cuts there won't show</div>
+                                        <div className="flex items-center gap-3"><svg width="56" height="10" className="shrink-0"><line x1="2" y1="5" x2="54" y2="5" stroke="#16a34a" strokeWidth="2" /></svg> Network operator line from its own open data (green = 33/66 kV, blue = 132 kV; dashed = underground)</div>
+                                        <div className="flex items-center gap-3"><span className="w-6 h-4 shrink-0" style={{ background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.5)' }} /> Scenario footprint: areas the scenario could affect</div>
+                                        <div className="flex items-center gap-3"><span className="w-6 h-4 shrink-0" style={{ background: 'rgba(239,68,68,0.5)', border: '1px solid #ef4444' }} /> Red haze: an area about to lose power, or coming back</div>
+                                        <div className="flex items-center gap-3"><span className="w-6 h-4 shrink-0" style={{ background: '#020409', border: '1px solid #ef4444' }} /> Lights out (modelled; which areas is illustrative)</div>
+                                        <div className="flex items-center gap-3"><svg width="56" height="10" className="shrink-0"><line x1="2" y1="5" x2="54" y2="5" stroke="#ef4444" strokeWidth="3" strokeDasharray="3 3" /></svg> Energy route cut by the scenario (flow stopped)</div>
+                                        <div className="flex items-center gap-3"><span className="w-4 h-4 rounded-full border-2 border-red-500 bg-red-500/25 shrink-0" /> Fleet affected by a common-mode scenario (illustrative)</div>
                                     </div>
                                 </div>
                                 <div>
@@ -218,12 +230,14 @@ const HelpModal: React.FC<HelpModalProps> = ({ onClose, onLaunchTour, initialTab
                                 <div className="space-y-3">
                                     {apiStatuses.map((status, i) => {
                                         const isGood = status.status === 'Operational' || status.status === 'Connected';
-                                        const isWarn = status.status === 'Degraded';
+                                        const isWarn = status.status === 'Degraded' || status.status === 'No coverage';
+                                        const isIdle = status.status === 'Not needed' || status.status === 'Not checked yet';
                                         return (
                                             <div key={i} className="flex justify-between items-center bg-slate-800/50 p-4 rounded border border-slate-700">
                                                 <div className="flex items-center gap-4">
                                                     {isGood ? <CheckCircleIcon className="w-6 h-6 text-green-500" /> : 
                                                      isWarn ? <ExclamationTriangleIcon className="w-6 h-6 text-amber-500" /> :
+                                                     isIdle ? <span className="w-6 h-6 rounded-full border-2 border-slate-500 inline-block" aria-hidden="true" /> :
                                                      <XCircleIcon className="w-6 h-6 text-red-500" />}
                                                     <div>
                                                         <div className="text-slate-200 font-bold">{status.org}</div>
@@ -231,7 +245,7 @@ const HelpModal: React.FC<HelpModalProps> = ({ onClose, onLaunchTour, initialTab
                                                     </div>
                                                 </div>
                                                 <div className="text-right">
-                                                    <div className={`text-sm font-bold ${isGood ? 'text-green-400' : isWarn ? 'text-amber-400' : 'text-red-400'}`}>{status.status}</div>
+                                                    <div className={`text-sm font-bold ${isGood ? 'text-green-400' : isWarn ? 'text-amber-400' : isIdle ? 'text-slate-400' : 'text-red-400'}`}>{status.status}</div>
                                                     <div className="text-xs text-slate-500">{status.keyStatus}</div>
                                                 </div>
                                             </div>

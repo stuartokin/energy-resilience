@@ -17,6 +17,7 @@ import { iconSvg, dotSvg, powerCutSvg, voltageColour, ASSET_ICON } from './icons
 import { FlowLink, fmtGW, fmtNative } from '../services/flows';
 import { loadConnections, connectionsAt, tecForStation, normaliseSubName, sameAsSite, ConnectionsData, FUEL_LABEL, FUEL_COLOUR, ECR_SOURCE_LABEL, REPD_STATUS, REPD_SOURCE, minVoltageForMW, searchRadiusKm, INFERENCE_NOTE } from '../services/connections';
 import { PlusIcon, MinusIcon } from '@heroicons/react/24/solid';
+import { loadGspUnits, unitsFromDno, resolveFootprint, unitStates, Unit, ScenarioUnits, SCENARIO_COLOURS, footprintOf } from '../services/footprint';
 
 interface MapProps {
     region: RegionConfig;
@@ -39,12 +40,23 @@ interface MapProps {
     regionalCarbon?: Record<string, RegionalCarbon>;
     floodWarnings?: FloodWarning[];
     weatherWarnings?: WeatherWarning[];
+    stepHours?: number;                 // hours since the scenario started at the current timeline step
+    cutRoutes?: Set<string>;            // flow link ids cut by the running scenarios
+    fleet?: string[];                   // fuel types hit by a common-mode scenario (highlighted)
+    placing?: boolean;                  // "Place it" mode: next map click chooses the location
+    onPlace?: (p: { lat: number; lng: number; label: string }) => void;
+    showCoverage?: boolean;             // hatch areas with no live power-cut data
+    onFootprint?: (info: { units: number; source: 'gsp' | 'dno' | 'none' }) => void;
 }
+
+// Areas with no open live power-cut feed, and areas where only inferred connection data exist
+const NO_FEED_RX = /north west/i;
 
 // PMTiles protocol (registered once)
 const pmtilesProtocol = new Protocol();
 maplibregl.addProtocol('pmtiles', pmtilesProtocol.tile);
 const TILES_URL = new URL('tiles/energy.pmtiles', document.baseURI).href;
+const DNO_LINES_URL = new URL('network/dno-lines.pmtiles', document.baseURI).href;
 
 const ESRI_BASE = 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}';
 const ESRI_LABELS = 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}';
@@ -142,12 +154,14 @@ const OSM_LAYERS = ['osm-plants-icon', 'osm-plants-fill', 'osm-substations-icon'
 const MapVisualization: React.FC<MapProps> = ({
     region, assets, outages, historicalOutages = [], activeScenarios, dnoRegions = [], day, filters,
     onAssetSelect, onViewChange, currentImpact = 0, peakImpact = 1, viewOverride, isScenarioComplete, generatorOutages = [],
-    interconnectorFlows = [], energyFlows = [], regionalCarbon = {}, floodWarnings = [], weatherWarnings = []
+    interconnectorFlows = [], energyFlows = [], regionalCarbon = {}, floodWarnings = [], weatherWarnings = [],
+    stepHours = 0, cutRoutes, fleet = [], placing = false, onPlace, showCoverage = true, onFootprint
 }) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const mapRef = useRef<maplibregl.Map | null>(null);
     const [ready, setReady] = useState(false);
     const [tilesAvailable, setTilesAvailable] = useState(false);
+    const [dnoLinesOn, setDnoLinesOn] = useState(false);
     const markersRef = useRef<Record<string, maplibregl.Marker[]>>({});
     const popupRef = useRef<maplibregl.Popup | null>(null);
     const lastScenarioId = useRef<string | null>(null);
@@ -155,8 +169,12 @@ const MapVisualization: React.FC<MapProps> = ({
     const flowsRef = useRef<FlowLink[]>([]);
 
     // Latest props for event handlers
-    const propsRef = useRef({ assets, onAssetSelect, onViewChange, regionalCarbon });
-    propsRef.current = { assets, onAssetSelect, onViewChange, regionalCarbon };
+    const propsRef = useRef({ assets, onAssetSelect, onViewChange, regionalCarbon, placing, onPlace });
+    propsRef.current = { assets, onAssetSelect, onViewChange, regionalCarbon, placing, onPlace };
+    const [units, setUnits] = useState<{ list: Unit[]; source: 'gsp' | 'dno' | 'none' }>({ list: [], source: 'none' });
+    const resolvedRef = useRef<ScenarioUnits[]>([]);
+    const unitStateRef = useRef<Map<string, number>>(new Map());
+    const darkenTimers = useRef<Map<string, any>>(new Map());
 
     const isGrowthScenario = activeScenarios.some(s => s.category === 'Growth');
     const growthYear = isGrowthScenario ? 2015 + Math.floor(day / 6) : null;
@@ -408,8 +426,30 @@ const MapVisualization: React.FC<MapProps> = ({
             map.addLayer({ id: 'dno-fill', type: 'fill', source: 'dno', paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.1 } });
             map.addLayer({ id: 'dno-line', type: 'line', source: 'dno', paint: { 'line-color': ['get', 'color'], 'line-width': 1.4, 'line-opacity': 0.8 } });
 
+            // Data coverage: hatched where no open live power-cut feed exists
+            const hatch = document.createElement('canvas'); hatch.width = hatch.height = 16;
+            const hx = hatch.getContext('2d');
+            if (hx) { hx.strokeStyle = 'rgba(251,191,36,0.55)'; hx.lineWidth = 2; hx.beginPath(); hx.moveTo(0, 16); hx.lineTo(16, 0); hx.moveTo(-4, 4); hx.lineTo(4, -4); hx.moveTo(12, 20); hx.lineTo(20, 12); hx.stroke();
+                const img = hx.getImageData(0, 0, 16, 16); if (!map.hasImage('hatch')) map.addImage('hatch', { width: 16, height: 16, data: new Uint8Array(img.data.buffer) }); }
+            map.addSource('coverage', { type: 'geojson', data: emptyFC as any });
+            map.addLayer({ id: 'coverage-hatch', type: 'fill', source: 'coverage', paint: { 'fill-pattern': 'hatch', 'fill-opacity': 0.8 } });
+            map.addLayer({ id: 'coverage-line', type: 'line', source: 'coverage', paint: { 'line-color': '#fbbf24', 'line-width': 1.2, 'line-dasharray': [2, 2], 'line-opacity': 0.8 } });
+
+            // Fallback impact circles (only when no area boundaries are available)
             map.addSource('impact', { type: 'geojson', data: emptyFC as any });
             map.addLayer({ id: 'impact-fill', type: 'fill', source: 'impact', paint: { 'fill-color': '#ef4444', 'fill-opacity': ['get', 'opacity'] } });
+            // Scenario footprint on Grid Supply Point areas: red haze, then lights out.
+            // State per area (feature-state 's'): 1 = in footprint (faint red haze), 2 = red haze (about to go dark / just restored), 3 = lights out
+            map.addSource('impact-areas', { type: 'geojson', data: emptyFC as any, promoteId: 'id' });
+            const S: any = ['coalesce', ['feature-state', 's'], 0];
+            const COL: any = ['coalesce', ['feature-state', 'col'], '#ef4444'];
+            map.addLayer({ id: 'impact-areas-fill', type: 'fill', source: 'impact-areas', paint: {
+                'fill-color': ['case', ['==', S, 3], '#020409', COL],
+                'fill-opacity': ['match', S, 3, 0.84, 2, 0.5, 1, 0.13, 0],
+                'fill-color-transition': { duration: 600 }, 'fill-opacity-transition': { duration: 600 } } as any });
+            map.addLayer({ id: 'impact-areas-line', type: 'line', source: 'impact-areas', paint: {
+                'line-color': COL, 'line-width': ['match', S, 3, 1.1, 2, 1.4, 0.6],
+                'line-opacity': ['match', S, 3, 0.75, 2, 0.95, 1, 0.35, 0] } as any });
 
             map.addSource('asset-lines', { type: 'geojson', data: emptyFC as any });
             map.addLayer({ id: 'asset-lines', type: 'line', source: 'asset-lines', filter: ['!', ['to-boolean', ['get', 'dashed']]], paint: { 'line-color': ['get', 'color'], 'line-width': ['case', ['to-boolean', ['get', 'affected']], 4, 2], 'line-opacity': 0.75 } });
@@ -431,7 +471,8 @@ const MapVisualization: React.FC<MapProps> = ({
             map.addSource('energy-flows', { type: 'geojson', data: emptyFC as any });
             const FLOW_WIDTH: any = ['interpolate', ['linear'], ['get', 'agw'], 0, 1, 0.5, 2, 2, 3.5, 10, 6.5, 40, 12];
             map.addLayer({ id: 'energy-flows-base', type: 'line', source: 'energy-flows', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ['get', 'color'], 'line-width': FLOW_WIDTH, 'line-opacity': ['case', ['>', ['get', 'agw'], 0.01], 0.28, 0.12] } });
-            map.addLayer({ id: 'energy-flows-dash', type: 'line', source: 'energy-flows', filter: ['>', ['get', 'agw'], 0.01], layout: { 'line-join': 'round' }, paint: { 'line-color': ['get', 'color'], 'line-width': FLOW_WIDTH, 'line-opacity': 0.95, 'line-dasharray': [0, 4, 3] } });
+            map.addLayer({ id: 'energy-flows-dash', type: 'line', source: 'energy-flows', filter: ['all', ['>', ['get', 'agw'], 0.01], ['!', ['to-boolean', ['get', 'cut']]]], layout: { 'line-join': 'round' }, paint: { 'line-color': ['get', 'color'], 'line-width': FLOW_WIDTH, 'line-opacity': 0.95, 'line-dasharray': [0, 4, 3] } });
+            map.addLayer({ id: 'energy-flows-cut', type: 'line', source: 'energy-flows', filter: ['to-boolean', ['get', 'cut']], layout: { 'line-cap': 'butt' }, paint: { 'line-color': '#ef4444', 'line-width': 3, 'line-opacity': 0.95, 'line-dasharray': [1, 1.2] } });
             map.on('click', 'energy-flows-base', (e: any) => {
                 if (e.originalEvent.__erHandled) return;
                 e.originalEvent.__erHandled = true;
@@ -504,6 +545,27 @@ const MapVisualization: React.FC<MapProps> = ({
                 else markFail('tiles', 'not built yet');
             } catch { markFail('tiles', 'not built yet'); }
 
+            // Network operators' own 33 kV+ line data (open-licence datasets only), built weekly; fills gaps in OpenStreetMap
+            try {
+                const head = await fetch(DNO_LINES_URL, { method: 'HEAD' });
+                if (head.ok && !(head.headers.get('content-type') || '').includes('text/html')) {
+                    map.addSource('dnolines', { type: 'vector', url: `pmtiles://${DNO_LINES_URL}` });
+                    const KV: any = ['to-number', ['get', 'kv'], 0];
+                    const colour: any = ['step', KV, '#16a34a', 100, '#0ea5e9'];
+                    const before = map.getLayer('labels') ? 'labels' : undefined;
+                    map.addLayer({ id: 'dno-lines-oh', type: 'line', source: 'dnolines', 'source-layer': 'dno_lines', minzoom: 8, filter: ['!', ['to-boolean', ['get', 'ug']]], paint: { 'line-color': colour, 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 0.6, 14, 2], 'line-opacity': 0.55 } }, before);
+                    map.addLayer({ id: 'dno-lines-ug', type: 'line', source: 'dnolines', 'source-layer': 'dno_lines', minzoom: 9, filter: ['to-boolean', ['get', 'ug']], paint: { 'line-color': colour, 'line-width': ['interpolate', ['linear'], ['zoom'], 9, 0.5, 14, 1.6], 'line-opacity': 0.5, 'line-dasharray': [2, 1.5] } }, before);
+                    ['dno-lines-oh', 'dno-lines-ug'].forEach(l => map.on('click', l, (e: any) => {
+                        if (e.originalEvent.__erHandled) return;
+                        e.originalEvent.__erHandled = true;
+                        const p: any = e.features?.[0]?.properties || {};
+                        showPopup(e.lngLat, `<div style="padding:10px 12px;max-width:260px"><b>${p.kv ? `${esc(p.kv)} kV ` : ''}${p.ug ? 'underground cable' : 'overhead line'}</b><div style="font-size:11px;color:#94a3b8;margin-top:3px">From ${esc(p.op)}'s open data (network operator records), used where OpenStreetMap may be incomplete. Route shown as published; may be simplified.</div></div>`);
+                    }));
+                    markOk('dnolines');
+                    setDnoLinesOn(true);
+                } else markFail('dnolines', 'not built yet');
+            } catch { markFail('dnolines', 'not built yet'); }
+
             // Clicks on our own layers
             const selectAsset = (e: any) => {
                 if (e.originalEvent.__erHandled) return;
@@ -514,6 +576,22 @@ const MapVisualization: React.FC<MapProps> = ({
             };
             ['assets', 'asset-lines', 'asset-lines-dashed'].forEach(l => map.on('click', l, selectAsset));
             map.on('click', (e: any) => {
+                if (propsRef.current.placing && propsRef.current.onPlace) {
+                    e.originalEvent.__erHandled = true;
+                    const { lng, lat } = e.lngLat;
+                    // Name it after the nearest substation we know of (within 25 km), otherwise by coordinates
+                    let best: { name: string; d: number } | null = null;
+                    const subs = map.getLayer('osm-substations-fill') ? map.queryRenderedFeatures([[e.point.x - 40, e.point.y - 40], [e.point.x + 40, e.point.y + 40]], { layers: ['osm-substations-fill', 'osm-substations-icon'].filter(l => map.getLayer(l)) }) : [];
+                    subs.forEach((f: any) => { const n = f.properties?.name; if (n && !best) best = { name: n, d: 0 }; });
+                    if (!best) propsRef.current.assets.forEach(a => {
+                        if (!/substation/.test(a.typeId) || !a.name) return;
+                        const d = Math.hypot((a.lng - lng) * 111 * Math.cos(lat * Math.PI / 180), (a.lat - lat) * 111);
+                        if (d < 25 && (!best || d < best.d)) best = { name: a.name, d };
+                    });
+                    const b = best as { name: string; d: number } | null;
+                    propsRef.current.onPlace({ lat, lng, label: b ? `near ${b.name}` : `at ${lat.toFixed(2)}, ${lng.toFixed(2)}` });
+                    return;
+                }
                 if (e.originalEvent.__erHandled) return;
                 (map.getSource('highlight') as maplibregl.GeoJSONSource)?.setData(emptyFC as any);
                 (map.getSource('conn-lines') as maplibregl.GeoJSONSource)?.setData(emptyFC as any);
@@ -566,9 +644,10 @@ const MapVisualization: React.FC<MapProps> = ({
         vis('national-links-dashed', tx || filters.has('Interconnector'));
         vis('osm-gas-sites', tx);
         vis('osm-demand', filters.has('Retail'));
+        if (map.getLayer('dno-lines-oh')) { const f: any = ['all', ...(tx ? [] : [['<', ['to-number', ['get', 'kv'], 0], 100]]), ...(dx ? [] : [['>=', ['to-number', ['get', 'kv'], 0], 100]])]; ['dno-lines-oh', 'dno-lines-ug'].forEach(l => { vis(l, tx || dx); map.setFilter(l, ['all', l === 'dno-lines-ug' ? ['to-boolean', ['get', 'ug']] : ['!', ['to-boolean', ['get', 'ug']]], f]); }); }
         vis('dno-fill', filters.has('DNO Regions'));
         vis('dno-line', filters.has('DNO Regions'));
-    }, [filters, ready, tilesAvailable]);
+    }, [filters, ready, tilesAvailable, dnoLinesOn]);
 
     // ---------- Our assets (built-in, snapshot, local search) and scenario state ----------
     useEffect(() => {
@@ -625,26 +704,136 @@ const MapVisualization: React.FC<MapProps> = ({
         (map.getSource('dno') as maplibregl.GeoJSONSource)?.setData({ type: 'FeatureCollection', features } as any);
     }, [dnoRegions, ready]);
 
-    // ---------- Scenario impact circles ----------
+    // ---------- Data coverage (areas with no open live power-cut feed) ----------
+    useEffect(() => {
+        const map = mapRef.current;
+        if (!map || !ready) return;
+        const gaps = (dnoRegions || []).filter(d => NO_FEED_RX.test(d.name) || d.id === 'nie_networks');
+        const features = !showCoverage ? [] : gaps.map(d => ({
+            type: 'Feature', properties: { name: d.name },
+            geometry: d.polygons && d.polygons.length
+                ? { type: 'MultiPolygon', coordinates: d.polygons.map(ring => [ring.map(([lat, lng]) => [lng, lat])]) }
+                : { type: 'Polygon', coordinates: [d.path.map(p => [p.lng, p.lat])] },
+        }));
+        (map.getSource('coverage') as maplibregl.GeoJSONSource)?.setData({ type: 'FeatureCollection', features } as any);
+        setMarkers('coverage', !showCoverage ? [] : gaps.map(d => {
+            const pts = d.polygons && d.polygons.length ? d.polygons.reduce((x, y) => (y.length > x.length ? y : x)).map(([lat, lng]) => [lng, lat]) : d.path.map(p => [p.lng, p.lat]);
+            const at: [number, number] = [pts.reduce((t, q) => t + q[0], 0) / pts.length, pts.reduce((t, q) => t + q[1], 0) / pts.length];
+            return {
+                lngLat: at, z: 1,
+                html: `<div style="white-space:nowrap;background:rgba(15,23,42,0.85);border:1px dashed #fbbf24;color:#fde68a;font:600 10px/1.3 system-ui,sans-serif;padding:2px 6px;border-radius:4px">No live power-cut data</div>`,
+                popup: `<div style="padding:10px 12px;max-width:260px"><b>${esc(d.name)}</b><div style="font-size:11px;margin-top:4px;color:#fde68a">No open live power-cut feed is connected for this area, so power cuts here will not appear on the map.</div><div style="font-size:11px;margin-top:4px;color:#94a3b8">${NO_FEED_RX.test(d.name) ? 'Electricity North West publishes its feed under a restricted ("Shared") licence, which this app does not use.' : 'NIE Networks has no open live feed connected.'} Check the operator's website or call 105.</div></div>`,
+            };
+        }));
+    }, [dnoRegions, showCoverage, ready]);
+
+    // ---------- Scenario footprints: areas (GSP areas, or network-operator areas as a fallback) ----------
+    useEffect(() => {
+        let gone = false;
+        loadGspUnits().then(gsp => {
+            if (gone) return;
+            if (gsp.length) { setUnits({ list: gsp, source: 'gsp' }); markOk('gsp', `${gsp.length} areas`); }
+            else {
+                markFail('gsp', 'not built yet');
+                const dno = unitsFromDno(dnoRegions || []);
+                setUnits({ list: dno, source: dno.length ? 'dno' : 'none' });
+            }
+        });
+        return () => { gone = true; };
+    }, [dnoRegions]);
+
+    // Which areas each running scenario affects (recomputed when the scenarios change)
+    const scenarioKey = activeScenarios.map(s => `${s.id}|${s.footprint?.placedAt || ''}`).join(',');
+    useEffect(() => {
+        const map = mapRef.current;
+        if (!map || !ready) return;
+        darkenTimers.current.forEach(t => clearTimeout(t)); darkenTimers.current.clear();
+        const src = map.getSource('impact-areas') as maplibregl.GeoJSONSource;
+        const prev = unitStateRef.current;
+        prev.forEach((_, id) => map.removeFeatureState({ source: 'impact-areas', id }));
+        unitStateRef.current = new Map();
+        resolvedRef.current = isGrowthScenario ? [] : activeScenarios.map(s => resolveFootprint(s, units.list));
+        const seen = new Set<string>();
+        const feats: any[] = [];
+        resolvedRef.current.forEach(r => r.units.forEach(u => {
+            if (seen.has(u.id)) return; seen.add(u.id);
+            feats.push({ type: 'Feature', id: u.id, properties: { id: u.id, area: u.area }, geometry: { type: 'MultiPolygon', coordinates: u.rings.map(ring => [ring]) } });
+        }));
+        src?.setData({ type: 'FeatureCollection', features: feats } as any);
+        onFootprint?.({ units: seen.size, source: units.source });
+        // Camera: fit to the footprint
+        if (feats.length && activeScenarios.length) {
+            const nat = activeScenarios.some(s => { const a = footprintOf(s).areas; return a === 'national' || a === 'placeable'; });
+            if (nat) map.fitBounds(UK_BOUNDS, { padding: ukPadding(), duration: 1200 });
+            else {
+                let x0 = 180, y0 = 90, x1 = -180, y1 = -90;
+                resolvedRef.current.forEach(r => r.units.forEach(u => u.rings.forEach(ring => ring.forEach(([x, y]) => { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }))));
+                if (x1 > x0) map.fitBounds([[x0, y0], [x1, y1]], { padding: ukPadding(), maxZoom: 8, duration: 1200 });
+            }
+        }
+    }, [scenarioKey, units, ready, isGrowthScenario]);
+
+    // State of each area at the current moment: newly affected areas glow red first, then go dark
+    useEffect(() => {
+        const map = mapRef.current;
+        if (!map || !ready || !map.getSource('impact-areas')) return;
+        const multi = activeScenarios.length > 1;
+        const next = activeScenarios.length ? unitStates(resolvedRef.current, stepHours) : new Map();
+        const before = unitStateRef.current;
+        const set = (id: string, st: number, col: string) => { try { map.setFeatureState({ source: 'impact-areas', id }, { s: st, col }); } catch { /* not loaded yet */ } };
+        const after = new Map<string, number>();
+        resolvedRef.current.forEach((r, si) => r.units.forEach(u => { if (!after.has(u.id)) after.set(u.id, 1); }));
+        next.forEach((v, id) => after.set(id, v.state === 'off' ? 3 : v.state === 'edge' ? 2 : 1));
+        after.forEach((st, id) => {
+            const si = next.get(id)?.scenario ?? 0;
+            const col = multi ? SCENARIO_COLOURS[si % SCENARIO_COLOURS.length] : '#ef4444';
+            const was = before.get(id) || 0;
+            if (st === 3 && was < 3) {
+                // red haze before the lights go out
+                set(id, 2, col);
+                if (!darkenTimers.current.has(id)) darkenTimers.current.set(id, setTimeout(() => { darkenTimers.current.delete(id); if (unitStateRef.current.get(id) === 3) set(id, 3, col); }, 650));
+            } else {
+                if (st < 3 && darkenTimers.current.has(id)) { clearTimeout(darkenTimers.current.get(id)); darkenTimers.current.delete(id); }
+                set(id, st, col);
+            }
+        });
+        unitStateRef.current = after;
+    }, [stepHours, scenarioKey, units, ready]);
+    useEffect(() => () => { darkenTimers.current.forEach(t => clearTimeout(t)); }, []);
+
+    // Fallback circles if no area boundaries are available at all
     useEffect(() => {
         const map = mapRef.current;
         if (!map || !ready) return;
         const src = map.getSource('impact') as maplibregl.GeoJSONSource;
-        if (isScenarioComplete || activeScenarios.length === 0 || isGrowthScenario || !(currentImpact > 0)) { src?.setData(emptyFC as any); return; }
+        const hasAreas = resolvedRef.current.some(r => r.units.length);
+        if (hasAreas || isScenarioComplete || activeScenarios.length === 0 || isGrowthScenario || !(currentImpact > 0)) { src?.setData(emptyFC as any); return; }
         const centre = region.id === 'UK' ? { lat: 52.4862, lng: -1.8904 } : { lat: region.lat, lng: region.lng };
-        const targets: { lat: number, lng: number, radius: number }[] = [];
-        if (activeScenarios.length > 1) targets.push({ ...centre, radius: Math.sqrt(currentImpact) * 100 });
-        else {
-            const sc = activeScenarios[0];
-            if (sc.locations?.length) {
-                const split = Math.max(currentImpact / sc.locations.length, 100);
-                sc.locations.forEach(l => targets.push({ lat: l.lat, lng: l.lng, radius: Math.sqrt(split) * 40 }));
-            } else if (sc.coordinates?.lat) targets.push({ ...sc.coordinates, radius: Math.sqrt(currentImpact) * 40 });
-            else targets.push({ ...centre, radius: Math.sqrt(currentImpact) * 100 });
-        }
+        const sc = activeScenarios[0];
+        const t = activeScenarios.length === 1 && sc.coordinates?.lat ? { ...sc.coordinates, radius: Math.sqrt(currentImpact) * 40 } : { ...centre, radius: Math.sqrt(currentImpact) * 100 };
         const opacity = 0.15 + (peakImpact > 0 ? currentImpact / peakImpact : 0) * 0.25;
-        src?.setData({ type: 'FeatureCollection', features: targets.map(t => ({ ...circlePolygon(t.lat, t.lng, t.radius), properties: { opacity } })) } as any);
-    }, [currentImpact, peakImpact, activeScenarios, isScenarioComplete, isGrowthScenario, region, ready]);
+        src?.setData({ type: 'FeatureCollection', features: [{ ...circlePolygon(t.lat, t.lng, t.radius), properties: { opacity } }] } as any);
+    }, [currentImpact, peakImpact, activeScenarios, isScenarioComplete, isGrowthScenario, region, ready, units]);
+
+    // Common-mode scenarios: highlight the affected fleet (e.g. all gas plants)
+    useEffect(() => {
+        if (!ready) return;
+        if (!fleet.length || !activeScenarios.length) { setMarkers('fleet', []); return; }
+        const want = new Set(fleet);
+        const list = assets.filter(a => want.has(a.typeId) && typeof a.lat === 'number' && (a.capacityMW || 0) >= 50)
+            .sort((x, y) => (y.capacityMW || 0) - (x.capacityMW || 0)).slice(0, 150);
+        setMarkers('fleet', list.map(a => ({
+            lngLat: [a.lng, a.lat] as [number, number], z: 3,
+            html: `<div class="fleet-pulse" style="width:${Math.max(10, Math.min(26, 6 + Math.sqrt(a.capacityMW || 0) / 3))}px;height:${Math.max(10, Math.min(26, 6 + Math.sqrt(a.capacityMW || 0) / 3))}px"></div>`,
+            popup: `<div style="padding:10px 12px;max-width:240px"><b>${esc(a.name)}</b><div style="font-size:11px;color:#fca5a5;margin-top:3px">In the fleet affected by this scenario (${esc(a.typeId)}). Illustrative: the scenario does not say which plants are affected.</div><div style="font-size:11px;color:#94a3b8">${a.capacityMW ? `${Math.round(a.capacityMW)} MW` : ''}</div></div>`,
+        })));
+    }, [fleet.join(','), activeScenarios.length, assets, ready]);
+
+    // Placement mode cursor
+    useEffect(() => {
+        const map = mapRef.current;
+        if (map) map.getCanvas().style.cursor = placing ? 'crosshair' : '';
+    }, [placing]);
 
     // ---------- Weather radar ----------
     useEffect(() => {
@@ -675,7 +864,17 @@ const MapVisualization: React.FC<MapProps> = ({
             el.style.cursor = 'pointer';
             if (it.z) el.style.zIndex = String(it.z);
             const m = new maplibregl.Marker({ element: el, anchor: it.anchor || 'center' }).setLngLat(it.lngLat).addTo(map);
-            if (it.popup) el.addEventListener('click', ev => { ev.stopPropagation(); showPopup(it.lngLat, it.popup!); });
+            el.addEventListener('click', ev => {
+                // In "Place it" mode a click on a marker still places the scenario where you clicked
+                if (propsRef.current.placing) {
+                    ev.stopPropagation();
+                    const r = map.getCanvas().getBoundingClientRect();
+                    const point = new maplibregl.Point(ev.clientX - r.left, ev.clientY - r.top);
+                    map.fire('click', { lngLat: map.unproject(point), point, originalEvent: ev });
+                    return;
+                }
+                if (it.popup) { ev.stopPropagation(); showPopup(it.lngLat, it.popup!); }
+            });
             return m;
         });
     };
@@ -743,11 +942,12 @@ const MapVisualization: React.FC<MapProps> = ({
         const feats = on ? energyFlows.map(l => {
             // Geometry runs in the direction of flow, so the moving dashes show which way energy is going
             const coords = l.gw < 0 ? [...l.path].reverse() : l.path;
-            return { type: 'Feature', properties: { id: l.id, agw: Math.abs(l.gw), color: l.kind === 'electricity' ? '#22d3ee' : '#f59e0b' }, geometry: { type: 'LineString', coordinates: coords } };
+            return { type: 'Feature', properties: { id: l.id, agw: Math.abs(l.gw), cut: !!cutRoutes?.has(l.id), color: l.kind === 'electricity' ? '#22d3ee' : '#f59e0b' }, geometry: { type: 'LineString', coordinates: coords } };
         }) : [];
         (map.getSource('energy-flows') as maplibregl.GeoJSONSource)?.setData({ type: 'FeatureCollection', features: feats } as any);
         // Labels about a third of the way in from the far end
-        setMarkers('flows', !on ? [] : energyFlows.filter(l => Math.abs(l.gw) > 0.01).map(l => {
+        setMarkers('flows', !on ? [] : energyFlows.filter(l => Math.abs(l.gw) > 0.01 || cutRoutes?.has(l.id)).map(l => {
+            const cut = !!cutRoutes?.has(l.id);
             const p = l.path[Math.min(l.path.length - 2, Math.max(0, Math.floor((l.path.length - 1) / 3)))];
             const q = l.path[Math.min(l.path.length - 1, Math.max(1, Math.floor((l.path.length - 1) / 3) + 1))];
             const at: [number, number] = [p[0] + (q[0] - p[0]) * 0.5, p[1] + (q[1] - p[1]) * 0.5];
@@ -755,11 +955,13 @@ const MapVisualization: React.FC<MapProps> = ({
             const into = l.gw > 0;
             return {
                 lngLat: at, z: 2,
-                html: `<div style="white-space:nowrap;background:rgba(15,23,42,0.88);border:1px ${into ? 'solid' : 'dashed'} ${colour};color:${colour};font:700 10px/1.25 system-ui,sans-serif;padding:1px 5px;border-radius:4px;opacity:${into ? 1 : 0.8}">${esc(l.name)} ${into ? '&#9654; in' : '&#9664; out'} ${fmtGW(l.gw)}</div>`,
+                html: cut
+                    ? `<div style="white-space:nowrap;background:rgba(69,10,10,0.92);border:1.5px solid #ef4444;color:#fecaca;font:700 10px/1.25 system-ui,sans-serif;padding:1px 5px;border-radius:4px">&#10005; ${esc(l.name)} cut in scenario (was ${fmtGW(l.gw)})</div>`
+                    : `<div style="white-space:nowrap;background:rgba(15,23,42,0.88);border:1px ${into ? 'solid' : 'dashed'} ${colour};color:${colour};font:700 10px/1.25 system-ui,sans-serif;padding:1px 5px;border-radius:4px;opacity:${into ? 1 : 0.8}">${esc(l.name)} ${into ? '&#9654; in' : '&#9664; out'} ${fmtGW(l.gw)}</div>`,
                 popup: flowPopup(l),
             };
         }));
-    }, [energyFlows, filters, ready]);
+    }, [energyFlows, filters, ready, cutRoutes]);
 
     // Move the dashes (only while flows are shown and the page is visible)
     useEffect(() => {
@@ -794,6 +996,7 @@ const MapVisualization: React.FC<MapProps> = ({
             const sc = activeScenarios[0];
             if (sc.id !== lastScenarioId.current) {
                 lastScenarioId.current = sc.id;
+                if (units.list.length) return; // the footprint effect fits the camera
                 if (activeScenarios.length === 1 && sc.coordinates?.lat) map.flyTo({ center: [sc.coordinates.lng, sc.coordinates.lat], zoom: 8 });
                 else if (activeScenarios.length === 1 && sc.locations?.length) map.flyTo({ center: [sc.locations[0].lng, sc.locations[0].lat], zoom: 8 });
             }

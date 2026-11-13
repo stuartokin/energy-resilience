@@ -244,7 +244,7 @@ const ReportBuilder: React.FC<Props> = (p) => {
                         <h2 className="text-lg font-bold">Assumptions and sources</h2>
                         <p className="text-[12px] mt-1">{methodNote}</p>
                         <table className="w-full text-[11px] font-sans mt-2"><tbody>
-                            {Object.values(ASSUMPTIONS).map(a => <tr key={a.id} className="border-b align-top"><td className="py-1 pr-2">{a.label} <span className="text-slate-500">({a.kind === 'sourced' ? 'sourced' : 'assumption'})</span></td><td className="py-1 text-right whitespace-nowrap">{a.value.toLocaleString()} {a.unit}</td><td className="py-1 pl-2 text-slate-600">{a.source?.title || a.basis.slice(0, 90)}</td></tr>)}
+                            {Object.values(ASSUMPTIONS).map(a => <tr key={a.id} className="border-b align-top"><td className="py-1 pr-2">{a.label} <span className="text-slate-500">({a.kind === 'sourced' ? 'sourced' : 'assumption'})</span></td><td className="py-1 text-right whitespace-nowrap">{a.value ? `${a.value.toLocaleString()} ` : ''}{a.unit}</td><td className="py-1 pl-2 text-slate-600">{a.source?.title || a.basis.slice(0, 90)}</td></tr>)}
                         </tbody></table>
                         <h3 className="font-bold text-[13px] mt-3">Scenario sources</h3>
                         <ul className="list-disc pl-5 text-[11px] font-sans">{Array.from(new Set(p.scenarios.flatMap(s => s.sources || []))).map(s => <li key={s}>{s}</li>)}</ul>

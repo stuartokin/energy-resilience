@@ -104,11 +104,49 @@ export const getApiSystemStatus = () => {
         row("Infrastructure snapshot", 'snapshot', "OpenStreetMap (built each publish)"),
         row("Connection registers", 'connections', "NESO TEC + DNO capacity registers (built each publish)"),
         ...connectionSourceRows(),
-        row("OpenStreetMap live (Overpass)", 'overpass', "Local detail when zoomed in"),
+        ...noFeedRows(),
+        overpassRow(),
+        row("Network operator lines (33 kV and above)", 'dnolines', "Built weekly from DNO open data"),
+        row("Grid Supply Point areas (scenario map)", 'gsp', "NESO open boundaries, built weekly; network-operator areas used until built"),
         row("Esri Dark Gray Canvas", 'basemap', "Map Tiles", 'Public'),
-        row("RainViewer", 'radar', "Weather Radar", 'Public'),
+        radarRow(),
     ];
 };
+
+// Areas with no live power-cut feed: shown as "No coverage" so the status is never falsely all-green
+const noFeedRows = () => OUTAGE_COVERAGE.filter(c => c.feed === 'none').map(c => ({
+    org: `Live power cuts: ${c.area}`, status: 'No coverage', keyStatus: c.note, type: 'Live Power Cuts',
+}));
+// Overpass is only used when the weekly map tiles are missing, so "not checked" is expected
+const overpassRow = () => {
+    const h = statusOf('overpass');
+    if (h.status === 'Not checked yet' && statusOf('tiles').status === 'Operational')
+        return { org: 'OpenStreetMap live (Overpass)', status: 'Not needed', keyStatus: 'Map tiles loaded, so live queries are not used', type: 'Local detail when zoomed in' };
+    return { org: 'OpenStreetMap live (Overpass)', status: h.status, keyStatus: h.detail || 'Open Data', type: 'Local detail when zoomed in' };
+};
+const radarRow = () => {
+    const h = statusOf('radar');
+    return { org: 'RainViewer', status: h.status === 'Not checked yet' ? 'Not needed' : h.status, keyStatus: h.status === 'Not checked yet' ? 'Checked when the weather radar layer is switched on' : (h.detail || 'Public'), type: 'Weather Radar' };
+};
+
+// ---------- Live power-cut coverage by network (shown on the map, in Overview and in System Status) ----------
+export interface OutageCoverage { id: string; dno: string; area: string; regions: string[]; feed: 'live' | 'worker' | 'none'; note: string }
+export const OUTAGE_COVERAGE: OutageCoverage[] = [
+    { id: 'ukpn', dno: 'UK Power Networks', area: 'London, South East and East of England', regions: ['London', 'South East England', 'East England'], feed: 'live', note: '' },
+    { id: 'npg', dno: 'Northern Powergrid', area: 'North East England and Yorkshire', regions: ['North East England', 'Yorkshire'], feed: 'live', note: '' },
+    { id: 'nged', dno: 'National Grid Electricity Distribution', area: 'Midlands, South West and South Wales', regions: ['West Midlands', 'East Midlands', 'South Wales', 'South West England'], feed: 'worker', note: '' },
+    { id: 'ssen', dno: 'Scottish and Southern Electricity Networks', area: 'North Scotland and Southern England', regions: ['North Scotland', 'Southern England'], feed: 'worker', note: '' },
+    { id: 'spen', dno: 'SP Energy Networks', area: 'Central and South Scotland, Merseyside and North Wales', regions: ['South and Central Scotland', 'North Wales, Merseyside and Cheshire'], feed: 'worker', note: '' },
+    { id: 'enwl', dno: 'Electricity North West', area: 'North West England', regions: ['North West England'], feed: 'none', note: 'Published under a restricted ("Shared") licence, so not shown. Check enwl.co.uk or call 105.' },
+    { id: 'nie', dno: 'NIE Networks', area: 'Northern Ireland', regions: ['NIE Networks'], feed: 'none', note: 'No open live power-cut feed connected. Check nienetworks.co.uk or call 105.' },
+];
+// Which networks are actually reporting right now
+export const outageCoverageNow = () => OUTAGE_COVERAGE.map(c => {
+    let ok = false;
+    if (c.feed === 'live') ok = statusOf(c.id).status === 'Operational';
+    if (c.feed === 'worker') ok = !!workerSourceStatus.find(w => w.id === c.id && w.ok);
+    return { ...c, ok };
+});
 
 const cleanText = (text: string): string => {
     if (!text) return "";

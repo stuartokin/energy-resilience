@@ -22,6 +22,8 @@ This app displays data from the sources below. Each is credited in the app (map 
 | Northern Powergrid Embedded Capacity Register | Northern Powergrid Open Data Licence v1.0 | "Northern Powergrid Embedded Capacity Register" in popups |
 | SP Energy Networks Embedded Capacity Register | CC BY 4.0 | "SP Energy Networks Embedded Capacity Register" in popups |
 | UK Power Networks Embedded Capacity Register | CC BY 4.0 | "UK Power Networks Embedded Capacity Register" in popups |
+| NESO GIS Boundaries for GB Grid Supply Points | NESO Open Data Licence | Help → About & sources; Results map key |
+| Network operators' open data: 33 kV+ lines and cables (only datasets under CC BY, OGL, ODbL or an operator open data licence; listed in `data/dno-lines-sources.json`) | Each dataset's own open licence | Operator named in each line's popup; Help → About & sources |
 | Esri World Dark Gray Canvas | Esri terms of use | "Basemap © Esri, HERE, Garmin" on the map |
 | RainViewer | RainViewer API terms | "Radar © RainViewer" on the map |
 

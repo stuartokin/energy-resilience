@@ -6,6 +6,23 @@ export interface ChangeEntry { version: string; date: string; title: string; cha
 
 export const CHANGELOG: ChangeEntry[] = [
     {
+        version: '4.1.0',
+        date: '2026-11-13',
+        title: 'Scenarios you can see: red haze, then lights out',
+        changes: [
+            'When a scenario runs, the map now shades real Grid Supply Point areas (NESO open boundaries). Areas glow red just before they lose power, then go dark; as supplies return they glow red again and clear. The number of dark areas matches the modelled customers off. Which areas go dark is illustrative and is labelled as such.',
+            'Scenarios now have a footprint: national events are spread across GB (demand disconnection scattered, black start in patches, gas emergencies on a rotating rota), regional events cover the right network areas, and city events start from an illustrative location based on a real past event (Lancaster 2015, North Hyde 2025).',
+            'Place it: local scenarios (substation attack, control-system attack, transformer failure, flooding, fire) can be placed anywhere by clicking the map.',
+            'Supply routes cut by a scenario (largest gas route, largest interconnector, Norwegian gas, LNG) turn red on the map with the flow stopped, chosen from live flows when the run starts. Common-mode scenarios highlight the affected fleet.',
+            'Captions on the map tell the story as it plays, using sourced facts from the real event where there is one, with markers on the timeline you can jump to. Playback is slower so the change can be seen.',
+            'Results now compares normal with scenario (customers off as a share of GB, loss against the 1,800 MW secured limit, routes cut against live supply) and has a map key.',
+            'Clearing is obvious: Clear on the timeline, Clear in the Library, and a "Scenario running ✕" chip in the top bar.',
+            'Data gaps are shown: areas with no open live power-cut feed are hatched on the map (Data coverage layer), Overview and Outages list which networks have no data, and System Status turns amber instead of showing all green.',
+            'New weekly data: network operators\' own 33 kV and above lines and cables, from datasets published under an open licence only, to fill gaps in OpenStreetMap.',
+            'System Status: OpenStreetMap live lookup and weather radar now say "Not needed" instead of "Not checked" when they are not in use.',
+        ],
+    },
+    {
         version: '4.0.0',
         date: '2026-11-13',
         title: 'New layout: Live and Scenarios modes, standard windows, report builder',

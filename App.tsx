@@ -11,7 +11,7 @@ import {
     fetchEnergyInfrastructure, generateRiskScenarios, calculateScenarioImpact,
     generateVideoReportScript, generateNarratedAudio, generateSlideshowImages, fetchRealTimeOutages,
     TOUR_SCRIPTS, getApiSystemStatus, fetchNESOPowerData, fetchHistoricalOutages, fetchGenerationMix,
-    generateSupplyChainAnalysis, searchInfrastructureAssets, loadDnoBoundaries, fetchGeneratorOutages
+    generateSupplyChainAnalysis, searchInfrastructureAssets, loadDnoBoundaries, fetchGeneratorOutages, outageCoverageNow, OUTAGE_COVERAGE
 } from './services/geminiService';
 import MapVisualization from './components/MapVisualization';
 import ChatPanel from './components/ChatPanel';
@@ -36,7 +36,8 @@ import ReportBuilder from './components/ReportBuilder';
 import { useWindows, AppMode, WinDef, FloatingWindow, SidePanel, MinimisedTray, ToolRail, PhoneSheet, PhoneTabs } from './components/shell/windows';
 import { OverviewPanel, ElectricityPanel, OutagesPanel } from './components/panels/LivePanels';
 import { ScenarioLibraryPanel, ResultsPanel, ScenarioModelPanel } from './components/panels/ScenarioPanels';
-import { buildFlows } from './services/flows';
+import { buildFlows, GW_PER_MCMD } from './services/flows';
+import { captionsFor, resolveRoutes, fleetOf, CutRoute, footprintOf, FOOTPRINT_NOTE, SCENARIO_COLOURS } from './services/footprint';
 import { buildTimeline, methodNote } from './services/impactModel';
 import { fetchInterconnectorFlows, fetchRegionalCarbon, fetchFloodWarnings, fetchGasSnapshot, fetchWeatherWarnings, fetchSystemWarnings, InterconnectorFlow, RegionalCarbon, FloodWarning, GasSnapshot, WeatherWarning, SystemWarning } from './services/liveSystems';
 import { hasAiKey, onAiKeyChange, onAiKeyRequired } from './services/aiKey';
@@ -176,6 +177,11 @@ export const App: React.FC = () => {
     const [systemWarnings, setSystemWarnings] = useState<SystemWarning[]>([]);
     const [liveSystemsUpdated, setLiveSystemsUpdated] = useState<Date | null>(null);
     const energyFlows = useMemo(() => buildFlows(icFlows, gas), [icFlows, gas]);
+    // Scenario map extras: routes cut (frozen when the run starts, so "largest route" doesn't move mid-run),
+    // fleet highlight, "Place it" mode, and the footprint size reported back by the map
+    const [cutRoutes, setCutRoutes] = useState<CutRoute[]>([]);
+    const [placing, setPlacing] = useState<RiskScenario | null>(null);
+    const [footprintInfo, setFootprintInfo] = useState<{ units: number; source: 'gsp' | 'dno' | 'none' }>({ units: 0, source: 'none' });
     useEffect(() => {
         const load = async () => {
             await Promise.allSettled([
@@ -232,7 +238,7 @@ export const App: React.FC = () => {
     
     // UI Interactions
     const [selectedAsset, setSelectedAsset] = useState<InfrastructureAsset | null>(null);
-    const [visibleLayers, setVisibleLayers] = useState<Set<string>>(new Set(['Generation', 'Transmission', 'Interconnector', 'Distribution', 'Retail', 'DNO Regions', 'Generator Outages', 'Flood Warnings', 'Weather Warnings', 'Interconnector Flows']));
+    const [visibleLayers, setVisibleLayers] = useState<Set<string>>(new Set(['Generation', 'Transmission', 'Interconnector', 'Distribution', 'Retail', 'DNO Regions', 'Generator Outages', 'Flood Warnings', 'Weather Warnings', 'Interconnector Flows', 'Data coverage']));
     const [selectedPointInfo, setSelectedPointInfo] = useState<TimelineStep | null>(null);
     const [mapCenterOverride, setMapCenterOverride] = useState<{lat: number, lng: number, zoom: number} | null>(null);
     const [customAssetQuery, setCustomAssetQuery] = useState("");
@@ -315,7 +321,7 @@ export const App: React.FC = () => {
         const statuses = getApiSystemStatus();
         const checked = statuses.filter(s => s.status === 'Operational' || s.status === 'Unavailable');
         const down = checked.filter(s => s.status === 'Unavailable').length;
-        const hasDegraded = down > 0 || statuses.some(s => s.status === 'Degraded');
+        const hasDegraded = down > 0 || statuses.some(s => s.status === 'Degraded' || s.status === 'No coverage'); // any area without live data keeps the dot amber
         const hasDown = checked.length > 0 && down >= Math.ceil(checked.length / 2);
         
         if (hasDown) return 'red';
@@ -483,8 +489,9 @@ export const App: React.FC = () => {
                     Math.abs(sc.coordinates!.lng - activeRegion.lng) < 0.01
                 );
 
-                if (hasCoords && !isGenericLocation) {
-                    setMapCenterOverride({ lat: sc.coordinates!.lat, lng: sc.coordinates!.lng, zoom: 9 }); 
+                // The map fits the camera to the scenario's footprint (MapVisualization); only fly here if it can't
+                if (hasCoords && !isGenericLocation && !sc.footprint) {
+                    setMapCenterOverride({ lat: sc.coordinates!.lat, lng: sc.coordinates!.lng, zoom: 9 });
                 }
                 lastActiveScenarioId.current = sc.id;
             }
@@ -496,7 +503,7 @@ export const App: React.FC = () => {
     useEffect(() => {
         if (isPlaying && activeScenarios.length > 0) {
             // Target duration: 10 seconds (10000ms) by default
-            const targetDurationMs = 10000;
+            const targetDurationMs = 20000; // slow enough to see the red haze before areas go dark
             const totalSteps = Math.max(timeline.length, 1);
             const baseInterval = targetDurationMs / totalSteps;
             const intervalTime = baseInterval / playbackSpeed;
@@ -788,7 +795,7 @@ export const App: React.FC = () => {
         setIsPlaying(false);
         setTimeline([]);
         setChartMode('normal');
-        setVisibleLayers(new Set(['Generation', 'Transmission', 'Interconnector', 'Distribution', 'Retail', 'DNO Regions', 'Generator Outages', 'Flood Warnings', 'Weather Warnings', 'Interconnector Flows']));
+        setVisibleLayers(new Set(['Generation', 'Transmission', 'Interconnector', 'Distribution', 'Retail', 'DNO Regions', 'Generator Outages', 'Flood Warnings', 'Weather Warnings', 'Interconnector Flows', 'Data coverage']));
         setActiveRegion(prev => ({...prev}));
         setMapCenterOverride({ lat: activeRegion.lat, lng: activeRegion.lng, zoom: activeRegion.zoom });
         setMinimizedPanels(new Set(INITIAL_MINIMIZED));
@@ -1188,6 +1195,39 @@ export const App: React.FC = () => {
         setIsPlaying(false);
         setTimeline([]);
         setCurrentDay(0);
+        setCutRoutes([]);
+        setPlacing(null);
+    };
+    const scenarioKey = activeScenarios.map(s => s.id).join(',');
+    useEffect(() => {
+        if (!activeScenarios.length) { setCutRoutes([]); return; }
+        if (cutRoutes.length && cutRoutes.every(r => energyFlows.links.some(l => l.id === r.id))) return;
+        setCutRoutes(resolveRoutes(activeScenarios, energyFlows.links));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [scenarioKey, energyFlows.links.length > 0]);
+    const cutSet = useMemo(() => new Set(cutRoutes.map(r => r.id)), [cutRoutes]);
+    const fleet = useMemo(() => fleetOf(activeScenarios), [scenarioKey]);
+    const stepHours = timeline[currentDay]?.hours ?? currentDay;
+    const captions = useMemo(() => captionsFor(activeScenarios, timeline), [scenarioKey, timeline]);
+    const caption = [...captions].reverse().find(c => c.atHours <= stepHours + 1e-6);
+    // "Place it": the next map click sets where a local scenario happens
+    const startPlacing = (sc: RiskScenario) => {
+        setPlacing(sc);
+        if (layoutMode === 'phone') setActiveSheet(null);
+        if (layoutMode === 'tablet') setOverlayPanel(null);
+    };
+    const handlePlace = (p: { lat: number; lng: number; label: string }) => {
+        const sc = placing;
+        if (!sc) return;
+        setPlacing(null);
+        const fp = footprintOf(sc);
+        const placed: RiskScenario = {
+            ...sc, id: `${sc.id}__placed`, name: `${sc.name} (${p.label})`,
+            coordinates: { lat: p.lat, lng: p.lng },
+            events: undefined, // real-event captions don't apply to a location you chose
+            footprint: { ...fp, areas: { point: { lat: p.lat, lng: p.lng, label: `Placed by you ${p.label}` } }, pattern: fp.pattern === 'scatter' ? 'spread' : (fp.pattern || 'spread'), placedAt: p.label },
+        };
+        runScenarios([placed]);
     };
     const handleVideoBriefing = () => {
         if (!activeScenarios.length) { openWin('library', 'scenarios'); return; }
@@ -1195,7 +1235,8 @@ export const App: React.FC = () => {
     };
     const resetLayout = () => { win.reset(); clearSavedLayout(); setOverlayPanel(null); };
 
-    const feedsLive = `${new Set(liveOutages.map(o => (o.source || '').replace(/\s*\(live\)/i, ''))).size} networks reporting`;
+    const coverageNow = outageCoverageNow();
+    const feedsLive = `${coverageNow.filter(c => c.ok).length} of ${coverageNow.length} networks live · no data: ${coverageNow.filter(c => !c.ok).map(c => c.area.split(',')[0]).join(', ')}`;
     const chatPanel = (
         <ChatPanel embedded
             isOpen={true}
@@ -1238,6 +1279,7 @@ export const App: React.FC = () => {
                 {['Generation', 'Transmission', 'Distribution', 'Interconnector', 'Retail'].map(cat => layerButton(cat, cat === 'Retail' ? 'Data centres' : cat, <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: ASSET_TYPES.find(t => t.category === cat)?.color || '#fff' }} />))}
                 {visibleLayers.has('Custom') && layerButton('Custom', 'Search results', <span className="w-2.5 h-2.5 bg-rose-500" />)}
                 {layerButton('DNO Regions', 'Network operator areas', <span className="w-2.5 h-2.5 rounded-full border border-slate-400" />)}
+                {layerButton('Data coverage', 'Data gaps (no live power-cut feed)', <span className="w-2.5 h-2.5 border border-amber-400" style={{ background: 'repeating-linear-gradient(135deg, rgba(251,191,36,0.7) 0 2px, transparent 2px 4px)' }} />, 'Hatched areas have no open live power-cut feed, so cuts there will not appear on the map.')}
             </div>
             <div>
                 <div className="text-[10px] font-bold text-slate-400 tracking-wider mb-1">LIVE LAYERS</div>
@@ -1298,9 +1340,9 @@ export const App: React.FC = () => {
         { id: 'systems', title: 'Notices, gas and weather', short: 'Systems', colour: '#06b6d4', icon: CloudIcon, modes: ['live'], width: 320,
           content: <LiveSystemsPanel flows={icFlows} gas={gas} weather={weatherWarnings} floods={floods} generatorOutages={generatorOutages} systemWarnings={systemWarnings} updated={liveSystemsUpdated} /> },
         { id: 'library', title: 'Scenario library', short: 'Library', colour: '#ef4444', icon: ListBulletIcon, modes: ['scenarios'], width: 420,
-          content: <ScenarioLibraryPanel scenarios={scenarios} running={activeScenarios} onRun={runScenarios} onManage={() => setShowScenarioManager(true)} /> },
+          content: <ScenarioLibraryPanel scenarios={scenarios} running={activeScenarios} onRun={runScenarios} onManage={() => setShowScenarioManager(true)} onPlace={startPlacing} onClear={handleStopSimulation} /> },
         { id: 'results', title: activeScenarios.length > 1 ? 'Results: composite event' : 'Results', short: 'Results', colour: '#dc2626', icon: ChartBarIcon, modes: ['scenarios'], width: 440,
-          content: <ResultsPanel active={activeScenarios} timeline={timeline} step={currentDay} onVideo={handleVideoBriefing} onReport={() => setShowReport(true)} onExport={handleQuickExport} onStop={handleStopSimulation} onLibrary={() => openWin('library')} /> },
+          content: <ResultsPanel active={activeScenarios} timeline={timeline} step={currentDay} onVideo={handleVideoBriefing} onReport={() => setShowReport(true)} onExport={handleQuickExport} onStop={handleStopSimulation} onLibrary={() => openWin('library')} cutRoutes={cutRoutes} footprint={footprintInfo} demandMW={nesoData.demand} gasSupplyGW={energyFlows.gasSupplyMcmd ? energyFlows.gasSupplyMcmd * GW_PER_MCMD : 0} /> },
         { id: 'model', title: 'Scenario model: values and sources', short: 'Model', colour: '#a855f7', icon: InformationCircleIcon, modes: ['scenarios'], width: 460,
           content: <ScenarioModelPanel /> },
         { id: 'layers', title: 'Map layers', short: 'Layers', colour: '#64748b', icon: FunnelIcon, modes: ['live', 'scenarios'], width: 320, content: layersContent },
@@ -1463,6 +1505,15 @@ export const App: React.FC = () => {
                         <button role="tab" type="button" aria-selected={appMode === 'live'} onClick={() => switchMode('live')} className={`px-3 lg:px-4 py-1.5 rounded-md text-xs font-semibold ${appMode === 'live' ? 'bg-cyan-700 text-white' : 'text-slate-400 hover:text-white'}`}>Live</button>
                         <button role="tab" type="button" aria-selected={appMode === 'scenarios'} onClick={() => switchMode('scenarios')} className={`px-3 lg:px-4 py-1.5 rounded-md text-xs font-semibold ${appMode === 'scenarios' ? 'bg-red-700 text-white' : 'text-slate-400 hover:text-white'}`}>Scenarios{activeScenarios.length > 0 && appMode !== 'scenarios' ? ' ●' : ''}</button>
                     </div>
+                    {activeScenarios.length > 0 && (
+                        <span className="flex items-center gap-1 pl-2 pr-1 py-1 rounded-lg bg-red-950/60 border border-red-800 text-red-200 text-[11px] font-semibold shrink-0 max-w-[40vw]">
+                            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse shrink-0" />
+                            <button type="button" onClick={() => { if (appMode !== 'scenarios') switchMode('scenarios'); openWin('results'); }} className="truncate hover:text-white" title={activeScenarios.map(s => s.name).join(', ')}>
+                                <span className="hidden md:inline">{activeScenarios.length > 1 ? `${activeScenarios.length} scenarios running` : 'Scenario running'}</span><span className="md:hidden">Running</span>
+                            </button>
+                            <button type="button" onClick={handleStopSimulation} aria-label="Clear scenario and timeline" title="Clear scenario and timeline" className="px-1.5 rounded hover:bg-red-900 text-red-300 hover:text-white">✕</button>
+                        </span>
+                    )}
                     {appMode === 'scenarios' && (
                         <ol aria-label="Steps" className="hidden 2xl:flex gap-1 text-[11px] shrink-0">
                             {[['Choose', 'library', true], ['Run', 'results', activeScenarios.length > 0], ['Results', 'results', activeScenarios.length > 0], ['Report', 'report', false]].map(([label, target, done]: any, i) => (
@@ -1525,12 +1576,34 @@ export const App: React.FC = () => {
                                     regionalCarbon={regionalCarbon}
                                     floodWarnings={floods?.warnings || []}
                                     weatherWarnings={weatherWarnings}
+                                    stepHours={stepHours}
+                                    cutRoutes={cutSet}
+                                    fleet={fleet}
+                                    placing={!!placing}
+                                    onPlace={handlePlace}
+                                    showCoverage={visibleLayers.has('Data coverage')}
+                                    onFootprint={setFootprintInfo}
                                 />
                             </div>
                             <button type="button" onClick={handleHomeView} title="Reset map view" aria-label="Reset map view"
                                 className="absolute top-3 left-3 z-10 bg-slate-950/90 border border-slate-700 w-10 h-10 rounded-lg shadow-xl hover:bg-slate-800 text-slate-300 hover:text-white flex items-center justify-center">
                                 <MapIcon className="w-5 h-5" />
                             </button>
+                            {placing && (
+                                <div role="status" className="absolute top-3 left-1/2 -translate-x-1/2 z-30 max-w-[92%] bg-amber-950/95 border border-amber-500 text-amber-100 rounded-xl shadow-2xl px-4 py-2.5 text-xs flex items-center gap-3">
+                                    <span><b>Click the map</b> to choose where “{placing.name}” happens. The location is yours to choose and is illustrative.</span>
+                                    <button type="button" onClick={() => setPlacing(null)} className="shrink-0 px-2.5 py-1 rounded-lg border border-amber-600 hover:bg-amber-900 font-semibold">Cancel</button>
+                                </div>
+                            )}
+                            {!placing && appMode === 'scenarios' && activeScenarios.length > 0 && timeline.length > 0 && (
+                                <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[15] w-[min(640px,calc(100%-7rem))] pointer-events-none flex flex-col items-center gap-1">
+                                    <div key={caption?.text || 'none'} className="er-caption w-full bg-slate-950/90 border border-red-900/70 rounded-xl shadow-2xl px-4 py-2 text-center">
+                                        <div className="text-[10px] font-bold tracking-wider text-red-300">{timeline[currentDay]?.label || ''} · {(timeline[currentDay]?.consumersOffline || 0).toLocaleString()} customers off</div>
+                                        {caption && <div className="text-xs sm:text-sm text-slate-100 leading-snug">{caption.text}</div>}
+                                    </div>
+                                    <div className="text-[10px] text-slate-400 bg-slate-950/80 rounded px-2 py-0.5">Modelled and illustrative: shaded areas are not a forecast of where cuts would fall</div>
+                                </div>
+                            )}
                             {selectedAsset && (
                                 <AssetDetails asset={selectedAsset} regionName={activeRegion.name} onClose={() => setSelectedAsset(null)} />
                             )}
@@ -1558,6 +1631,8 @@ export const App: React.FC = () => {
                                     onPlayPause={() => setIsPlaying(!isPlaying)}
                                     onSeek={setCurrentDay}
                                     onSpeedChange={setPlaybackSpeed}
+                                    marks={captions.map(c => ({ step: Math.max(0, timeline.findIndex(t => (t.hours ?? t.day) >= c.atHours - 1e-6)), text: c.text }))}
+                                    onClear={handleStopSimulation}
                                 />
                             </div>
                         )}

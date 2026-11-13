@@ -128,6 +128,27 @@ export interface RiskScenario {
     references?: string[];       // ids of REFERENCE_EVENTS this scenario is calibrated against or compares with
     supplyLost?: { mw: number; label: string }; // supply or capacity lost (informational)
     customersBasis?: 'sourced' | 'scaled' | 'assumption';
+    footprint?: Footprint;       // where on the map the impact is drawn (services/footprint.ts)
+    events?: { atHours: number; text: string }[]; // captions shown on the map as the scenario plays
+}
+
+// Where a scenario's impact falls. Areas are Grid Supply Point areas (NESO boundaries).
+//   areas:   'national' (all GB), regions (network-operator areas by name), a point (nearest areas),
+//            'placeable' (you choose the place with "Place it"; until then shown spread across GB),
+//            or 'none' (no customer cuts drawn)
+//   pattern: spread   - outward from the centre; the centre stays dark longest (storms, local events)
+//            scatter  - scattered across the footprint (automatic low-frequency disconnection)
+//            patches  - whole regions return in patches (black start restoration)
+//            rota     - blocks switch off and on in rotation (rota disconnections)
+//   routes:  energy-flow routes to show as cut (ids from services/flows.ts, or 'largestGas',
+//            'largestElec', 'lng', 'norway')
+//   fleet:   generator fuel types to flag on the map (common-mode failures)
+export interface Footprint {
+    areas: 'national' | 'placeable' | 'none' | { regions: string[] } | { point: { lat: number; lng: number; label: string } };
+    pattern?: 'spread' | 'scatter' | 'patches' | 'rota';
+    routes?: string[];
+    fleet?: string[];
+    placedAt?: string;           // label of the place chosen with "Place it"
 }
 
 // How customers lose and regain supply over time. All times in hours from the start of the event.

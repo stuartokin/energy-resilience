@@ -7,7 +7,7 @@
 //  - Customers off supply over time come from `model` (services/impactModel.ts); cost is derived from it.
 //  - Likelihood labels are qualitative judgements informed by the UK National Risk Register, not forecasts.
 // To add a scenario, copy one below and change it. The weekly research agent proposes new ones for review.
-import { RiskScenario, ImpactProfile } from '../types';
+import { RiskScenario, ImpactProfile, Footprint } from '../types';
 import { peakOf, horizonHours } from '../services/impactModel';
 
 const S = {
@@ -47,7 +47,71 @@ const make = (d: Def): RiskScenario => ({
     status: 'Standard', lastUpdated: Date.UTC(2026, 10, 12),
 });
 
-export const SCENARIO_LIBRARY: RiskScenario[] = [
+// Where each scenario shows on the map (services/footprint.ts). Areas are illustrative, not forecasts.
+//  national  = anywhere in GB; placeable = a local event with no fixed location (use "Place it");
+//  regions   = network-operator areas (NESO names); point = an illustrative location based on a real past event.
+//  pattern   = how the dark areas are arranged: spread (from the centre outwards), scatter (demand disconnection
+//              is spread across the country), patches (whole groups of areas), rota (rotating 3-hour blocks).
+//  routes    = energy flows shown as cut (flow ids, or largestGas / largestElec / lng / norway, resolved from live data).
+//  fleet     = asset types highlighted for common-mode scenarios.
+const NORTH = ['North Scotland', 'South and Central Scotland', 'North East England'];
+const FOOTPRINTS: Record<string, Footprint> = {
+    st_windstorm_north: { areas: { regions: NORTH }, pattern: 'spread' },
+    st_substation_flood: { areas: { point: { lat: 54.05, lng: -2.8, label: 'Illustrative location (based on Lancaster, Storm Desmond 2015)' } }, pattern: 'spread' },
+    st_snow_ice: { areas: { regions: ['North West England', 'South and Central Scotland', 'North East England'] }, pattern: 'patches' },
+    st_space_weather: { areas: 'national', pattern: 'patches' },
+    st_cold_still: { areas: 'national', pattern: 'rota' },
+    cy_dno_breakers: { areas: 'placeable', pattern: 'patches' },
+    cy_dno_ransomware: { areas: 'placeable', pattern: 'patches' },
+    cy_neso_failover: { areas: 'national', pattern: 'scatter' },
+    cy_neso_national: { areas: 'national', pattern: 'patches' },
+    cy_common_supplier: { areas: 'national', pattern: 'scatter', fleet: ['gas', 'nuclear', 'biomass'] },
+    cy_mass_devices: { areas: 'national', pattern: 'scatter' },
+    cy_flex_fleet: { areas: 'national', pattern: 'scatter' },
+    cy_gas_terminal: { areas: 'none', routes: ['largestGas'] },
+    af_aug2019: { areas: 'national', pattern: 'scatter' },
+    af_three_units: { areas: 'national', pattern: 'scatter' },
+    af_largest_ic: { areas: 'none', routes: ['largestElec'] },
+    af_substation_fire: { areas: { point: { lat: 51.5, lng: -0.42, label: 'Illustrative location (based on North Hyde, March 2025)' } }, pattern: 'spread' },
+    af_voltage_collapse: { areas: 'national', pattern: 'patches' },
+    sc_transformer_spare: { areas: 'placeable', pattern: 'spread' },
+    sc_type_fault: { areas: 'national', pattern: 'scatter' },
+    sc_storm_staffing: { areas: { regions: NORTH }, pattern: 'spread' },
+    sc_export_controls: { areas: 'none' },
+    gp_subsea: { areas: 'none', routes: ['largestElec', 'largestGas'] },
+    gp_gas_winter: { areas: 'national', pattern: 'rota', routes: ['norway'] },
+    gp_substation_attack: { areas: 'placeable', pattern: 'patches' },
+    gp_lng: { areas: 'none', routes: ['lng'] },
+    s_growth_dc: { areas: 'none' },
+    gr_cold_electrified: { areas: 'national', pattern: 'rota' },
+    gr_dc_gsp: { areas: 'placeable', pattern: 'spread' },
+};
+
+// Captions shown on the map as a scenario plays. Only for scenarios based on a real event, and only what the
+// cited source says (the app adds peak and restoration milestones from the model itself).
+const EVENTS: Record<string, { atHours: number; text: string }[]> = {
+    af_aug2019: [
+        { atHours: 0, text: 'Lightning strike; an offshore wind farm, a gas power station and embedded generation are lost. LFDD disconnects about 4% of demand (Ofgem 2020).' },
+        { atHours: 0.75, text: 'In 2019 all supplies were restored within 45 minutes (Ofgem 2020).' },
+    ],
+    af_substation_fire: [
+        { atHours: 0, text: 'Transformer fire: the whole substation is lost overnight, as at North Hyde in March 2025 (NESO 2025).' },
+        { atHours: 6, text: 'The distribution network is rearranged to restore customers from other substations.' },
+        { atHours: 13, text: 'At North Hyde, all but two SSEN customers were back on by 12:24 the next day (NESO 2025).' },
+    ],
+    st_windstorm_north: [
+        { atHours: 0, text: 'Northerly gale: trees bring down overhead lines across rural networks.' },
+        { atHours: 24, text: 'In Storm Arwen, 82% of customers were restored within 24 hours (Ofgem 2022).' },
+        { atHours: 168, text: 'In Storm Arwen, nearly 4,000 customers (0.4%) were still off after a week (Ofgem 2022).' },
+    ],
+    st_substation_flood: [
+        { atHours: 0, text: 'Flood water reaches the substation, which is switched off for safety (as in Lancaster, December 2015).' },
+    ],
+};
+
+const withMap = (s: RiskScenario): RiskScenario => ({ ...s, footprint: FOOTPRINTS[s.id], events: EVENTS[s.id] });
+
+export const SCENARIO_LIBRARY: RiskScenario[] = ([
     // ---------------- Storm and weather ----------------
     make({
         id: 'st_windstorm_north', name: 'Severe windstorm in northern Britain', category: 'Storm',
@@ -324,4 +388,4 @@ export const SCENARIO_LIBRARY: RiskScenario[] = [
         rationale: 'Base case: managed constraint, no customer cuts. See the connection registers on the map for real queues at each substation.',
         sources: [S.nrr],
     }),
-];
+] as RiskScenario[]).map(withMap);

@@ -5,6 +5,8 @@ import { describeProfile, profileOf, peakOf, horizonHours, customersOffAt, metho
 import { ASSUMPTIONS, REFERENCE_EVENTS } from '../../content/assumptions';
 import { GAS_CV_NOTE } from '../../services/flows';
 import { ImpactChart } from '../Charts';
+import { footprintOf, CutRoute, FOOTPRINT_NOTE, SCENARIO_COLOURS } from '../../services/footprint';
+import { fmtGW } from '../../services/flows';
 
 const CATS = ['Storm', 'Cyber', 'Asset Failure', 'Supply Chain', 'Geopolitical', 'Growth'];
 const BASIS: Record<string, [string, string]> = {
@@ -24,8 +26,11 @@ export const WhyNumbers: React.FC<{ s: RiskScenario }> = ({ s }) => (
     </div>
 );
 
+// Local scenarios can be placed on the map by the user
+const isLocal = (s: RiskScenario) => { const a = footprintOf(s).areas; return a === 'placeable' || (typeof a === 'object' && 'point' in a); };
+
 // ---------- Library ----------
-export const ScenarioLibraryPanel: React.FC<{ scenarios: RiskScenario[]; running: RiskScenario[]; onRun: (s: RiskScenario[]) => void; onManage: () => void }> = ({ scenarios, running, onRun, onManage }) => {
+export const ScenarioLibraryPanel: React.FC<{ scenarios: RiskScenario[]; running: RiskScenario[]; onRun: (s: RiskScenario[]) => void; onManage: () => void; onPlace?: (s: RiskScenario) => void; onClear?: () => void }> = ({ scenarios, running, onRun, onManage, onPlace, onClear }) => {
     const [cat, setCat] = useState('All');
     const [q, setQ] = useState('');
     const [picked, setPicked] = useState<Set<string>>(new Set(running.map(s => s.id)));
@@ -66,7 +71,10 @@ export const ScenarioLibraryPanel: React.FC<{ scenarios: RiskScenario[]; running
                                         <span>{s.probability} likelihood</span>
                                         {b ? <span className={`px-1 rounded border text-[10px] ${b[1]}`}>{b[0]}</span> : <span className="px-1 rounded border border-slate-700 text-[10px]">{/^AI draft/.test(s.rationale || '') ? 'AI draft' : 'No model'}</span>}
                                     </div>
-                                    <button type="button" onClick={() => setOpen(open === s.id ? null : s.id)} className="text-[11px] text-cyan-300 hover:underline mt-1" aria-expanded={open === s.id}>{open === s.id ? 'Hide details' : 'Why these numbers?'}</button>
+                                    <div className="flex flex-wrap gap-x-3 mt-1">
+                                        <button type="button" onClick={() => setOpen(open === s.id ? null : s.id)} className="text-[11px] text-cyan-300 hover:underline" aria-expanded={open === s.id}>{open === s.id ? 'Hide details' : 'Why these numbers?'}</button>
+                                        {onPlace && isLocal(s) && <button type="button" onClick={() => onPlace(s)} className="text-[11px] text-amber-300 hover:underline" title="Choose on the map where this happens, then run it">Place it on the map</button>}
+                                    </div>
                                     {open === s.id && <div className="mt-1.5"><p className="text-[11px] text-slate-300 mb-1">{s.description}</p><WhyNumbers s={s} /></div>}
                                 </div>
                             </div>
@@ -77,6 +85,7 @@ export const ScenarioLibraryPanel: React.FC<{ scenarios: RiskScenario[]; running
             </div>
             <div className="sticky bottom-0 -mx-3 -mb-3 px-3 py-2.5 bg-slate-950/95 border-t border-slate-800 flex items-center gap-2">
                 <div className="flex-1 text-[11px] text-slate-300"><b>Basket: {basket.length}</b>{basket.length > 0 && <div className="text-slate-400">Combined peak {fmtN(peak)} customers · {Math.ceil(days)} days</div>}</div>
+                {(basket.length > 0 || running.length > 0) && <button type="button" onClick={() => { setPicked(new Set()); onClear?.(); }} className="px-2.5 py-2 rounded-lg border border-slate-700 text-[11px] text-slate-300 hover:text-white" title="Empty the basket and clear any running scenario and its timeline">Clear</button>}
                 <button type="button" onClick={onManage} className="px-2.5 py-2 rounded-lg border border-slate-700 text-[11px] text-slate-300 hover:text-white" title="Edit, add, import, export or AI-generate scenarios">Manage</button>
                 <button type="button" disabled={!basket.length} onClick={() => onRun(basket)} className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white text-xs font-bold">Run</button>
             </div>
@@ -88,7 +97,8 @@ export const ScenarioLibraryPanel: React.FC<{ scenarios: RiskScenario[]; running
 export const ResultsPanel: React.FC<{
     active: RiskScenario[]; timeline: TimelineStep[]; step: number;
     onVideo: () => void; onReport: () => void; onExport: () => void; onStop: () => void; onLibrary: () => void;
-}> = ({ active, timeline, step, onVideo, onReport, onExport, onStop, onLibrary }) => {
+    cutRoutes?: CutRoute[]; footprint?: { units: number; source: 'gsp' | 'dno' | 'none' }; demandMW?: number; gasSupplyGW?: number;
+}> = ({ active, timeline, step, onVideo, onReport, onExport, onStop, onLibrary, cutRoutes = [], footprint, demandMW = 0, gasSupplyGW = 0 }) => {
     const now = timeline[Math.min(step, timeline.length - 1)];
     const isGrowth = active.length === 1 && active[0].category === 'Growth';
     const peak = useMemo(() => Math.max(0, ...timeline.map(t => t.consumersOffline)), [timeline]);
@@ -125,6 +135,32 @@ export const ResultsPanel: React.FC<{
                     })}
                 </div>
             )}
+            {!isGrowth && (
+                <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 text-[11px] space-y-1.5">
+                    <div className="font-semibold text-slate-200">Normal vs scenario</div>
+                    <Row k="Customers off supply" normal="0" sc={`${now.consumersOffline.toLocaleString()} (${((now.consumersOffline / ASSUMPTIONS.gbCustomers.value) * 100).toFixed(now.consumersOffline / ASSUMPTIONS.gbCustomers.value < 0.01 ? 2 : 1)}% of GB)`} />
+                    {active.filter(s => s.supplyLost).map(s => (
+                        <Row key={s.id} k="Single loss vs secured limit" normal={`up to ${ASSUMPTIONS.largestInfeed.value.toLocaleString()} MW covered`} sc={`${s.supplyLost!.mw.toLocaleString()} MW (${s.supplyLost!.mw > ASSUMPTIONS.largestInfeed.value ? 'beyond the limit' : 'within the limit'})`} />
+                    ))}
+                    {cutRoutes.map(r => (
+                        <Row key={r.id} k={`${r.name} (${r.kind})`} normal={`${fmtGW(r.gw)} now (live)`} sc={`0: cut${r.kind === 'gas' && gasSupplyGW > 0 && r.gw > 0 ? ` (${Math.round((r.gw / gasSupplyGW) * 100)}% of current gas supply)` : r.kind === 'electricity' && demandMW > 0 && r.gw > 0 ? ` (${((r.gw * 1000 / demandMW) * 100).toFixed(1)}% of demand now)` : ''}`} />
+                    ))}
+                    {cutRoutes.length > 0 && <div className="text-slate-500">Routes are chosen from live flows when the run starts ({cutRoutes.map(r => r.why).join('; ')}).</div>}
+                </div>
+            )}
+            {!isGrowth && (
+                <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 text-[11px] space-y-1.5">
+                    <div className="font-semibold text-slate-200">Map key</div>
+                    <div className="flex flex-wrap gap-x-3 gap-y-1 text-slate-300">
+                        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.5)' }} />Area in footprint</span>
+                        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ background: 'rgba(239,68,68,0.5)', border: '1px solid #ef4444' }} />Red haze: going dark or coming back</span>
+                        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ background: '#020409', border: '1px solid #ef4444' }} />Lights out</span>
+                        {cutRoutes.length > 0 && <span className="flex items-center gap-1.5"><span className="w-4 border-t-2 border-dashed border-red-500" />Route cut</span>}
+                    </div>
+                    {active.length > 1 && <div className="flex flex-wrap gap-x-3 gap-y-1">{active.map((s, i) => <span key={s.id} className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: SCENARIO_COLOURS[i % SCENARIO_COLOURS.length] }} />{s.name}</span>)}</div>}
+                    <p className="text-slate-500">{FOOTPRINT_NOTE}{footprint ? ` Now showing ${footprint.units} ${footprint.source === 'gsp' ? 'Grid Supply Point' : 'network-operator'} areas.` : ''}</p>
+                </div>
+            )}
             {active.some(s => s.supplyLost) && <div className="text-[11px] text-slate-400">{active.filter(s => s.supplyLost).map(s => <div key={s.id}><b className="text-slate-300">Supply lost ({s.name}):</b> {s.supplyLost!.label}</div>)}</div>}
             <details className="bg-slate-900 border border-slate-800 rounded-lg p-3 text-[11px] text-slate-400">
                 <summary className="cursor-pointer font-semibold text-slate-200">How these figures are worked out</summary>
@@ -136,11 +172,17 @@ export const ResultsPanel: React.FC<{
                 <button type="button" onClick={onVideo} className="py-2.5 rounded-lg border border-slate-700 bg-slate-900 hover:border-slate-500 text-xs font-semibold">Video briefing</button>
                 <button type="button" onClick={onReport} className="py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold">Create report</button>
                 <button type="button" onClick={onExport} className="py-2 rounded-lg border border-slate-800 text-[11px] text-slate-300 hover:text-white">Export data (JSON)</button>
-                <button type="button" onClick={onStop} className="py-2 rounded-lg border border-red-900 text-[11px] text-red-300 hover:text-white">Stop simulation</button>
+                <button type="button" onClick={onStop} className="py-2 rounded-lg border border-red-900 text-[11px] text-red-300 hover:text-white">Clear scenario and timeline</button>
             </div>
         </div>
     );
 };
+
+const Row: React.FC<{ k: string; normal: string; sc: string }> = ({ k, normal, sc }) => (
+    <div className="grid grid-cols-[1fr_auto_auto] gap-x-2 items-baseline">
+        <span className="text-slate-400">{k}</span><span className="text-slate-500 text-right">{normal}</span><span className="text-red-300 font-mono text-right">→ {sc}</span>
+    </div>
+);
 
 // ---------- Model: every value and reference event ----------
 export const ScenarioModelPanel: React.FC = () => (
@@ -157,7 +199,7 @@ export const ScenarioModelPanel: React.FC = () => (
                     <div key={a.id} className="bg-slate-900 p-2.5 rounded-lg border border-slate-800">
                         <div className="flex justify-between gap-3 flex-wrap text-[12px]">
                             <span className="font-semibold text-white">{a.label}</span>
-                            <span className="font-mono text-cyan-300">{a.value.toLocaleString()} {a.unit} <span className={`ml-1 text-[10px] px-1.5 rounded border ${a.kind === 'sourced' ? 'text-emerald-300 border-emerald-800' : 'text-amber-300 border-amber-800'}`}>{a.kind === 'sourced' ? 'Sourced' : 'Assumption'}</span></span>
+                            <span className="font-mono text-cyan-300">{a.value ? `${a.value.toLocaleString()} ` : ''}{a.unit} <span className={`ml-1 text-[10px] px-1.5 rounded border ${a.kind === 'sourced' ? 'text-emerald-300 border-emerald-800' : 'text-amber-300 border-amber-800'}`}>{a.kind === 'sourced' ? 'Sourced' : 'Assumption'}</span></span>
                         </div>
                         <div className="text-slate-400 text-[11px] mt-1">{a.basis}</div>
                         {a.source && <a href={a.source.url} target="_blank" rel="noopener noreferrer" className="text-[11px] text-cyan-400 hover:underline">{a.source.title}</a>}

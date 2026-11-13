@@ -62,6 +62,11 @@ export const ASSUMPTIONS: Record<string, Assumption> = {
         basis: 'Under the Electricity Supply Emergency Code (ESEC), planned rota disconnections are organised in blocks of a few hours so the same customers are not off continuously. Three hours is used as a representative block; the code allows variations.',
         source: { title: 'DESNZ: Electricity Supply Emergency Code', url: 'https://www.gov.uk/government/publications/electricity-supply-emergency-code' },
     },
+    mapArea: {
+        id: 'mapArea', label: 'Customers per shaded map area (scenarios)', value: 0, unit: 'customers (30 million ÷ number of areas)', kind: 'assumption',
+        basis: 'To show where a scenario\'s power cuts could fall, the map uses NESO\'s Grid Supply Point areas and treats each as an equal share of GB customers (30 million ÷ the number of areas). The number of areas shown dark matches the modelled customers off. Real areas vary a lot in size, and which areas go dark is illustrative, not a forecast.',
+        source: { title: 'NESO: GIS boundaries for GB Grid Supply Points', url: 'https://www.neso.energy/data-portal/gis-boundaries-gb-grid-supply-points' },
+    },
     gasCv: {
         id: 'gasCv', label: 'Gas calorific value (for GW conversion)', value: 39.5, unit: 'MJ/m³', kind: 'assumption',
         basis: 'Typical calorific value of GB transmission gas; National Gas publishes actual daily values, usually 38-41 MJ/m³. 1 mcm/d ≈ 457 MW.',

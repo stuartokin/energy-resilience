@@ -9,6 +9,7 @@ A public, personal project by Stuart Okin: a live picture of the GB energy syste
 - **AI output is labelled** as unverified web search. AI never supplies the numbers in scenario impact models.
 - **No site-specific attack detail.** Scenarios are system-level and generic (e.g. "single OT vendor common-mode compromise"), never naming a vendor against mapped sites, never speculating about a specific site's suppliers, controls or weaknesses.
 - **Scenarios** live in `content/scenarios.ts`. Each needs a `model`, a `rationale` (why the numbers; say "assumption" where it is one), `sources` ("Title — URL") and `customersBasis`. Model values live in `content/assumptions.ts` with a source or stated reasoning. Real events are reference points, not targets.
+- **Scenario map footprints** (`FOOTPRINTS` in `content/scenarios.ts`, drawn by `services/footprint.ts`) are illustrative: national, regions, `placeable`, or a point based on a real past event, never a site picked as a target. `EVENTS` captions only state what the cited source says. Every shaded area must stay labelled as modelled and illustrative. DNO line data is used only from datasets under an open licence; skip anything "Shared".
 - Don't use restricted data (e.g. ENWL "Shared" data) or anything not openly licensed for public display.
 
 ## Documentation is part of every change
