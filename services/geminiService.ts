@@ -1,11 +1,12 @@
 
 import { GoogleGenAI, Modality, Type, FunctionDeclaration } from "@google/genai";
-import { RiskScenario, InfrastructureAsset, TimelineStep, ChatMessage, OutageEvent, GenerationMix, SupplyChainInsight, LogEntry, DNORegion, GeneratorOutage } from '../types';
+import { RiskScenario, InfrastructureAsset, TimelineStep, ChatMessage, OutageEvent, GenerationMix, LogEntry, DNORegion, GeneratorOutage } from '../types';
 import { ASSET_TYPES, DEEP_SEARCH_PROTOCOLS, REGIONS, UK_DNO_REGIONS } from '../constants';
 import { getAiKey, onAiKeyChange, requestAiKey } from './aiKey';
 import { OUTAGE_WORKER_URL } from '../config';
 import { markOk, markFail, statusOf } from './health';
 import { buildTimeline, describeProfile, profileOf, methodNote } from './impactModel';
+import { MODEL_PATTERNS } from '../content/scenarios';
 import { loadConnections, ConnectionSource } from './connections';
 
 // One System Status row per connection register, from the last build (shows whether the GitHub secrets work)
@@ -947,59 +948,46 @@ export const fetchEnergyInfrastructure = async (
     }
 };
 
+// ---------- AI scenario proposals ----------
+// AI may propose WHAT could happen (and cite sources for why it matters). It never supplies numbers or
+// locations: before a proposal can run, the user picks which library scenario's sourced model it borrows
+// (content/scenarios.ts MODEL_PATTERNS / adoptProposal).
+const PROPOSAL_RULES = `
+RULES:
+- Do NOT give any numbers for customers affected, duration, cost or megawatts. The app models impact itself from sourced past events.
+- Do NOT give coordinates, and do not name specific real sites, substations or companies as targets. Keep it generic.
+- Do not name equipment suppliers.
+- "pattern" must be ONE of: ${MODEL_PATTERNS.map(p => `"${p.id}" (${p.label})`).join('; ')}. Pick the closest real-event pattern.
+- "sources": real, checkable sources you found ("Title - URL") for why this risk matters. If you have none, return [].`;
+const PROPOSAL_FIELDS = `{ "name": "Plain title", "category": "Storm" | "Cyber" | "Asset Failure" | "Supply Chain" | "Geopolitical", "description": "One or two sentences", "narrative": "What happens, in plain English, without numbers", "pattern": "<pattern id>", "why": "Why this risk matters now, citing the sources", "sources": ["Title - URL"] }`;
+const toProposal = (r: any, region: string, i: number): RiskScenario => ({
+    id: `proposal_${Date.now()}_${i}`,
+    name: String(r.name || `AI proposal ${i + 1}`).slice(0, 120),
+    category: ['Storm', 'Cyber', 'Asset Failure', 'Supply Chain', 'Geopolitical'].includes(r.category) ? r.category : 'Asset Failure',
+    description: String(r.description || '').slice(0, 400),
+    narrative: String(r.narrative || '').slice(0, 1500),
+    probability: 'Medium', impactLevel: 'Major',
+    durationDays: 0, peakConsumersAffected: 0, affectedAssets: [], region,
+    status: 'Proposal', lastUpdated: Date.now(),
+    suggestedPattern: MODEL_PATTERNS.some(p => p.id === r.pattern) ? r.pattern : undefined,
+    sources: Array.isArray(r.sources) ? r.sources.slice(0, 6).map(String) : [],
+    rationale: `AI proposal (not checked): ${String(r.why || 'no reasoning given').slice(0, 600)}`,
+});
+
 export const generateCustomScenario = async (userQuery: string, region: string): Promise<RiskScenario | null> => {
     if (!aiClient) initGenAI();
     if (!aiClient) { requestAiKey(); return null; }
-    const isDeepSearch = !userQuery.trim();
-    const promptText = isDeepSearch 
-        ? `Conduct a DEEP SWEEP threat assessment for ${region}. Search across ALL risk categories (Storm, Cyber, Asset Failure, Geopolitical, Supply Chain) for the single most probable and high-impact scenario currently. Do not default to generic results.`
-        : `Create a detailed Energy Risk Scenario for ${region} based on this specific query: "${userQuery}".`;
-    const prompt = `
-        ${promptText}
-        Return a valid JSON object (NOT an Array) with this schema:
-        {
-            "name": "Creative Title",
-            "category": "Storm" | "Cyber" | "Asset Failure" | "Supply Chain" | "Geopolitical" | "Growth",
-            "description": "Short summary",
-            "probability": "Low" | "Medium" | "High",
-            "impactLevel": "Major" | "Critical",
-            "durationDays": integer,
-            "peakConsumersAffected": integer,
-            "affectedDistricts": ["Town A", "City District B"],
-            "locations": [{"name": "Site A", "lat": 51.5, "lng": -0.1}, {"name": "Site B", "lat": 52.0, "lng": -1.5}] (Optional, for specific impact points),
-            "narrative": "Detailed narrative.",
-            "sources": ["Source title - URL"],
-            "rationale": "Why these numbers: the reference event and source, or 'my judgement' where it is an assumption"
-        }
-
-    RULES: Keep scenarios generic - do not name equipment suppliers, and do not name specific real sites as targets of attack.
-    Base "peakConsumersAffected" and "durationDays" on a real past event where possible, and explain how in "rationale" (name the event and source). If a number is your own judgement, say so in "rationale". Never invent statistics.
-    `;
+    const ask = userQuery.trim()
+        ? `Propose one energy risk scenario for ${region} based on this request: "${userQuery}".`
+        : `Propose the one energy risk scenario for ${region} that public sources suggest matters most right now.`;
+    const prompt = `${ask}\nReturn a single JSON object (not an array): ${PROPOSAL_FIELDS}\n${PROPOSAL_RULES}`;
     try {
-        const response = await aiClient.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: [{ parts: [{ text: prompt }] }],
-            config: { tools: [{ googleSearch: {} }] }
-        });
-        const text = response.text || "";
-        const json = JSON.parse(extractJSON(text));
-        
-        // Ensure coordinates exist if locations provided
-        let coords = { lat: 0, lng: 0 };
-        if (json.locations && json.locations.length > 0) {
-            coords = { lat: json.locations[0].lat, lng: json.locations[0].lng };
-        }
-        
-        return {
-            id: `custom_${Date.now()}`,
-            ...json,
-            rationale: `AI draft (not checked): ${json.rationale || 'no reasoning given'}. Impact over time uses the simple default shape.`,
-            coordinates: coords,
-            affectedAssets: [], region: region, lastUpdated: Date.now(), status: 'New'
-        };
-    } catch (e) { 
+        const response = await aiClient.models.generateContent({ model: 'gemini-2.5-flash', contents: [{ parts: [{ text: prompt }] }], config: { tools: [{ googleSearch: {} }] } });
+        const json = JSON.parse(extractJSON(response.text || ''));
+        return toProposal(Array.isArray(json) ? json[0] : json, region, 0);
+    } catch (e) {
         handleApiError(e);
-        return null; 
+        return null;
     }
 };
 
@@ -1207,51 +1195,20 @@ export const fetchHistoricalOutages = async (regionName: string, year: number = 
     return [];
 };
 
-export const generateRiskScenarios = async (regionName: string, assets: InfrastructureAsset[] = []): Promise<RiskScenario[]> => {
+export const generateRiskScenarios = async (regionName: string, _assets: InfrastructureAsset[] = []): Promise<RiskScenario[]> => {
     if (!aiClient) initGenAI();
     if (!aiClient) return [];
-    const assetContext = assets.filter(a => ['nuclear', 'gas', 'substation', 'wind_offshore'].includes(a.typeId)).slice(0, 8).map(a => `ID:${a.id} Name:${a.name} Type:${a.typeId}`).join(", ");
-    const prompt = `Generate 8 detailed energy risk scenarios for ${regionName}. Asset Context: ${assetContext}. REQUIRED: Cyber, Asset Failure, Storm, Supply Chain.
-    Structure the response as a JSON Array.
-    Ensure scenarios include a 'locations' array if they affect specific multiple sites (e.g. coordinated attacks). Format: locations: [{name, lat, lng}].
-    Each item also needs "rationale" (why these numbers) and "sources" (["title - URL"]).
-
-    RULES: Keep scenarios generic - do not name equipment suppliers, and do not name specific real sites as targets of attack.
-    Base "peakConsumersAffected" and "durationDays" on a real past event where possible, and explain how in "rationale" (name the event and source). If a number is your own judgement, say so in "rationale". Never invent statistics.
-`;
+    const prompt = `Propose 4 energy risk scenarios for ${regionName} that are not already obvious (we already cover storms like Arwen, 9 August 2019, North Hyde, black start, gas shortage, subsea cables, LNG, cyber attacks on control systems, smart devices and supply chain).
+Return a JSON array of objects: ${PROPOSAL_FIELDS}
+${PROPOSAL_RULES}`;
     try {
-        const response = await aiClient.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: [{ parts: [{ text: prompt }] }],
-            config: { tools: [{ googleSearch: {} }] }
-        });
-        if (response.text) {
-            const raw = JSON.parse(extractJSON(response.text));
-            return raw.map((r: any, i: number) => ({
-                id: `risk_${Date.now()}_${i}`,
-                name: r.name || `Scenario ${i+1}`,
-                category: r.category || "Asset Failure",
-                description: r.description || "Unforeseen grid disruption event.",
-                probability: r.probability || "Medium",
-                impactLevel: r.impactLevel || "Major",
-                durationDays: r.duration || r.durationDays || 5,
-                peakConsumersAffected: r.peakConsumersAffected || 50000,
-                affectedAssets: r.affectedAssets || [],
-                affectedDistricts: r.affectedDistricts || [],
-                locations: r.locations || [],
-                region: regionName,
-                narrative: r.narrative || "No details provided.",
-                lastUpdated: Date.now(),
-                status: 'New',
-                sources: r.sources || ["AI Analysis"],
-                rationale: `AI draft (not checked): ${r.rationale || 'no reasoning given'}. Impact over time uses the simple default shape.`,
-            }));
-        }
-    } catch (e: any) { 
+        const response = await aiClient.models.generateContent({ model: 'gemini-2.5-flash', contents: [{ parts: [{ text: prompt }] }], config: { tools: [{ googleSearch: {} }] } });
+        const raw = JSON.parse(extractJSON(response.text || '[]'));
+        return (Array.isArray(raw) ? raw : [raw]).slice(0, 6).map((r: any, i: number) => toProposal(r, regionName, i));
+    } catch (e: any) {
         handleApiError(e);
-        return []; 
+        return [];
     }
-    return [];
 };
 
 // Kept for compatibility: the impact model now lives in services/impactModel.ts (no AI, no random numbers).
@@ -1286,57 +1243,6 @@ export const analyzeAssetRisks = async (asset: InfrastructureAsset, region: stri
     } catch(e) { 
         handleApiError(e);
         return "Analysis failed or quota exceeded."; 
-    }
-};
-
-export const generateSupplyChainAnalysis = async (region: string): Promise<SupplyChainInsight[]> => {
-    if (!aiClient) initGenAI();
-    if (!aiClient) return [];
-
-    const prompt = `
-        Conduct a supply chain analysis for the Energy Sector in ${region}.
-        Search for associations between major Operational Technology (OT), SCADA, DCS, and Industrial Automation suppliers and local Energy Companies/DNOs.
-        Target Suppliers: Siemens, Schneider Electric, GE Vernova, ABB, Honeywell, Dragos, Nozomi Networks, Claroty, Palo Alto Networks, IBM, Accenture, Transition Technologies MS.
-        
-        Return a valid JSON ARRAY of objects with this schema:
-        {
-            "supplier": "Supplier Name",
-            "techDomain": "SCADA" | "DCS" | "Industrial Automation" | "OT Security",
-            "operatorConnection": "Name of Energy Company/DNO using this tech",
-            "potentialAssets": ["List of likely asset types or specific known sites"],
-            "evidence": "Brief summary of the relationship (e.g. 'Signed 5yr partnership in 2023')",
-            "probability": "High" | "Medium" | "Low",
-            "sources": ["URL or Title"]
-        }
-        Limit to top 8 most significant relationships found.
-    `;
-
-    try {
-        const response = await aiClient.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: [{ parts: [{ text: prompt }] }],
-            config: { tools: [{ googleSearch: {} }] }
-        });
-        
-        const text = response.text || "";
-        const json = JSON.parse(extractJSON(text));
-        
-        if (Array.isArray(json)) {
-            return json.map((item: any) => ({
-                supplier: item.supplier || "Unknown",
-                techDomain: item.techDomain || "OT",
-                operatorConnection: item.operatorConnection || "Regional Grid",
-                potentialAssets: item.potentialAssets || [],
-                evidence: item.evidence || "Inferred from market share.",
-                probability: item.probability || "Medium",
-                sources: item.sources || []
-            }));
-        }
-        return [];
-    } catch (e) {
-        handleApiError(e);
-        console.error("Supply chain analysis failed", e);
-        return [];
     }
 };
 
@@ -1590,13 +1496,3 @@ export const generateIncidentVideo = async (scenario: RiskScenario) => {
     return null;
 };
 
-export const TOUR_SCRIPTS: Record<string, string> = {
-    intro: "Welcome to the Energy Sector Resilience Platform. This dashboard visualizes critical infrastructure and simulates risks. Explore the map, run scenarios, and analyze data.",
-    asset_info: "Click on any asset marker (Power Plants, Substations) to view details. Use the 'AI Analysis' button in the details panel to get a deep-dive risk assessment.",
-    scenarios: "Open the Scenario Manager (Warning Icon) to create or select risk events. You can generate custom scenarios using AI or pick standard ones.",
-    timeline: "The timeline at the bottom tracks impact over time. You can play, pause, and speed up the simulation.",
-    analyst: "The Analyst AI Assistant (bottom right) offers real-time insights. Ask it about the current simulation state or specific asset vulnerabilities.",
-    reports: "Generate audio briefings and print-ready reports via the buttons in the top header or within the simulation stats panel.",
-    supply_chain: "The Supply Chain tool analyzes OT vendor risks. Note: This is AI-generated based on public associations and may contain inaccuracies.",
-    help: "Access data sources, restart this tour, or view system information from the help menu."
-};

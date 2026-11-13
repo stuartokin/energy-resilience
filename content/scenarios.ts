@@ -389,3 +389,37 @@ export const SCENARIO_LIBRARY: RiskScenario[] = ([
         sources: [S.nrr],
     }),
 ] as RiskScenario[]).map(withMap);
+
+// ---------------- Patterns for AI proposals ----------------
+// AI can suggest a scenario (what happens and why it matters), but never its numbers. Before a proposal can
+// run, you choose which library scenario's sourced or scaled model it borrows: customers off over time,
+// map footprint and restoration all come from that scenario, with its sources.
+export interface ModelPattern { id: string; label: string; from: string; local?: boolean }
+export const MODEL_PATTERNS: ModelPattern[] = [
+    { id: 'arwen', label: 'Regional storm, like Storm Arwen (about 1 million off; most back within 24 h)', from: 'st_windstorm_north' },
+    { id: 'aug2019', label: 'Sudden loss of generation, like 9 August 2019 (demand disconnection; back within 45 min)', from: 'af_aug2019' },
+    { id: 'three_units', label: 'Larger loss of generation (scaled from 9 August 2019)', from: 'af_three_units' },
+    { id: 'north_hyde', label: 'One major substation lost, like North Hyde 2025 (about 72,000 off; back next day)', from: 'af_substation_fire', local: true },
+    { id: 'lancaster', label: 'Substation flooded, like Lancaster 2015 (about 61,000 off for 1 to 3 days)', from: 'st_substation_flood', local: true },
+    { id: 'dno_control', label: 'Control-system attack on one network, like Ukraine 2015 (hours)', from: 'cy_dno_breakers', local: true },
+    { id: 'national', label: 'National power failure and black start (restoration standard)', from: 'cy_neso_national' },
+    { id: 'gas_rota', label: 'Gas or supply shortage leading to rota disconnections', from: 'gp_gas_winter' },
+    { id: 'no_cuts', label: 'No customer power cuts in the base case (a risk to supply or prices only)', from: 'cy_neso_failover' },
+];
+
+// Turn an AI proposal into a runnable scenario using a pattern's sourced numbers
+export const adoptProposal = (p: RiskScenario, patternId: string): RiskScenario | null => {
+    const pat = MODEL_PATTERNS.find(x => x.id === patternId);
+    const src = pat && SCENARIO_LIBRARY.find(x => x.id === pat.from);
+    if (!pat || !src || !src.model) return null;
+    const fp = src.footprint ? { ...src.footprint } : undefined;
+    if (fp && pat.local) fp.areas = 'placeable';
+    const aiPart = (p.rationale || '').replace(/^AI proposal \(not checked\):\s*/, '');
+    return {
+        ...p, status: 'User', basedOn: src.id, model: src.model, footprint: fp, events: undefined, supplyLost: src.supplyLost,
+        customersBasis: src.customersBasis, peakConsumersAffected: src.peakConsumersAffected, durationDays: src.durationDays,
+        coordinates: undefined, locations: [],
+        rationale: `Numbers borrowed from the library scenario "${src.name}": ${src.rationale} The scenario idea was proposed by AI (not checked)${aiPart ? `: ${aiPart}` : '.'}`,
+        sources: [...src.sources, ...(p.sources || []).map(x => `AI-suggested (not checked): ${x}`)],
+    };
+};

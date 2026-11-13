@@ -28,5 +28,5 @@ export const DATA_SOURCES: DataSource[] = [
     { name: 'OSUKED Power Station Dictionary', usedFor: 'Locations of power station units (to place REMIT outages)', refresh: 'Each publish', licence: 'MIT', url: 'https://github.com/OSUKED/Power-Station-Dictionary' },
     { name: 'Esri World Dark Gray Canvas', usedFor: 'Map background', refresh: 'Live tiles', licence: 'Esri terms of use (attribution)', url: 'https://www.arcgis.com/home/item.html?id=358ec1e175ea41c3bf5c68f0da11ae2b' },
     { name: 'RainViewer', usedFor: 'Weather radar', refresh: 'Live tiles', licence: 'RainViewer API terms (attribution)', url: 'https://www.rainviewer.com/api.html' },
-    { name: 'Google Gemini (visitor\'s own key)', usedFor: 'AI analyst, AI summaries, AI-generated scenarios', refresh: 'On request', licence: 'Google Gemini API terms', url: 'https://ai.google.dev' },
+    { name: 'Google Gemini (visitor\'s own key)', usedFor: 'AI analyst, AI report summaries, and AI scenario proposals (ideas only: numbers come from sourced library scenarios)', refresh: 'On request', licence: 'Google Gemini API terms', url: 'https://ai.google.dev' },
 ];

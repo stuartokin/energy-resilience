@@ -3,6 +3,15 @@
 Newest first. Mirrored in the app under **Help → What's new** (`content/changelog.ts`).
 Versioning: MAJOR = big change in what the app is; MINOR = new features or data sources; PATCH = fixes.
 
+## 4.2.0 - 2026-11-13 - Playback with lead-in, red haze then black, AI proposals, new tour
+- `services/impactModel.ts`: timelines start with a lead-in of normal running (negative `hours`, at least 4 steps, about an eighth of the run); `customersOffAt` is 0 before the event. Step `day` is the array index.
+- Playback (App.tsx): time per step is weighted by change in customers off and by captions (about 22 s at 1x); follows seeks while playing.
+- Map: `impact-red`, `impact-red-line` and `impact-black` layers above everything except energy flows. A per-area animator drives feature-state `r`/`k`: red haze, then black; restore fades the black out over about 1.4 s. The faint pre-warning haze shows only while customers off is rising. `services/footprint.ts` orders areas by rank so the dark share is exact.
+- Layers: new `Power Cuts` toggle. On run, Power Cuts, Generator Outages, Retail (data centres) and Data coverage are hidden and then restored on Clear.
+- AI: `generateRiskScenarios` and `generateCustomScenario` return proposals (`status: 'Proposal'`, no numbers, no coordinates, `suggestedPattern`). `content/scenarios.ts` adds `MODEL_PATTERNS` and `adoptProposal`. The Library has a proposals box with pattern choice, "Add to library" and "Discard". Proposals can't run. Auto-generation on load is removed. Old saved "AI draft" scenarios are migrated to proposals.
+- Tour: `components/TourGuide.tsx` rewritten (10 steps, non-blocking card, each step drives the UI). `TOUR_SCRIPTS` is removed.
+- Removed: OT supply chain analysis (`generateSupplyChainAnalysis`, Tools card, modal). `components/SupplyChainModal.tsx` is no longer used and can be deleted from the repo.
+
 ## 4.1.0 - 2026-11-13 - Scenario footprints (red haze, then lights out), data coverage, DNO lines
 - `services/footprint.ts`: scenario footprints on NESO GSP areas (`public/data/gsp-areas.json`), falling back to DNO areas. Each area = 30 million ÷ number of areas customers (labelled assumption `mapArea`); share of footprint areas dark = modelled customers off. Patterns: spread, scatter, patches, rota (3-hour blocks). Newly dark areas show red haze for about 0.65 s first. Captions from scenario `events` plus model milestones. Route resolution (`largestGas`, `largestElec`, `norway`, `lng`) against live flows, frozen at run start.
 - `types.ts`: `Footprint`, `RiskScenario.footprint`, `RiskScenario.events`. `content/scenarios.ts`: `FOOTPRINTS` and `EVENTS` maps (events only for real reference events, from the cited sources).

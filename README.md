@@ -42,7 +42,8 @@ A live picture of the GB energy system - infrastructure, power cuts, generator o
 | `scripts/build-bmu-locations.mjs` | Power station unit locations → `data/bmu-locations.json` (places REMIT outages on the map). |
 | `scripts/build-connections.mjs` | Which generators and batteries connect to which substation → `data/connections.json` (NESO TEC/Embedded Registers + DNO Embedded Capacity Registers), plus the government planning database (REPD) for areas no register covers. Where no connection is published, the map infers the likely substation from OpenStreetMap and labels it as inferred. |
 | `services/connections.ts` | Reads `connections.json` and matches register entries to map substations by name. |
-| `content/scenarios.ts` | **The scenario library.** Each scenario has a model, the reasoning for its numbers and its sources. Copy one to add a new scenario. |
+| `content/scenarios.ts` | **The scenario library.** Each scenario has a model, the reasoning for its numbers and its sources. Copy one to add a new scenario. Also the map footprints, captions, and the patterns AI proposals must borrow their numbers from. |
+| `components/TourGuide.tsx` | The guided tour (steps and text). Each step opens the part of the app it describes (`handleTourStep` in App.tsx). |
 | `content/assumptions.ts` | **Every value the impact model uses**, with source or reasoning, plus reference events. Shown in Help → Scenario model. |
 | `services/impactModel.ts` | Turns a scenario into customers off supply over time, energy not supplied and cost (VoLL). No AI, no random numbers. |
 | `services/footprint.ts` | Where a running scenario shows on the map: Grid Supply Point areas, red haze then lights out, patterns, captions, routes cut. Illustrative, and labelled so. |

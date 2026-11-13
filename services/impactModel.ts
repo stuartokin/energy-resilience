@@ -9,6 +9,7 @@ import { A } from '../content/assumptions';
 
 // Customers off supply at time t (hours) for one profile
 export const customersOffAt = (p: ImpactProfile, t: number): number => {
+    if (t < 0) return 0; // before the event
     switch (p.type) {
         case 'instant': {
             if (t < 0) return 0;
@@ -105,11 +106,18 @@ export const buildTimeline = (scenarios: RiskScenario[]): TimelineStep[] => {
     const kw = A('avgCustomerKw'), voll = A('voll');
     const steps: TimelineStep[] = [];
     let mwh = 0;
+    // Lead-in: a few steps of normal running before the event hits (about an eighth of the run, at least 4 steps)
+    const lead = Math.max(4, Math.round((horizon / step) * 0.12));
+    for (let j = lead; j > 0; j--) {
+        const t = -j * step;
+        const label = step === 24 ? `${j} day${j > 1 ? 's' : ''} before` : `${j * step} h before`;
+        steps.push({ day: steps.length, hours: t, label, consumersOffline: 0, costMillions: 0, energyUnservedMWh: 0, restorationPct: 100, activeAlerts: [], description: `${label}: normal running, all customers on supply` });
+    }
     for (let i = 0, t = 0; t <= horizon + step; i++, t += step) {
         const off = profiles.reduce((a, p) => a + customersOffAt(p, t), 0);
         if (i > 0) mwh += (off * kw * step) / 1000;
         steps.push({
-            day: i, hours: t, label: labelFor(t, step),
+            day: steps.length, hours: t, label: labelFor(t, step),
             consumersOffline: Math.round(off),
             costMillions: Math.round((mwh * voll) / 1e5) / 10,
             energyUnservedMWh: Math.round(mwh),

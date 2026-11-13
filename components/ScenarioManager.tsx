@@ -588,12 +588,12 @@ const ScenarioManager: React.FC<ScenarioManagerProps> = ({ scenarios, onRunSimul
                         {/* AI Generator */}
                         <div className="bg-slate-900 rounded-lg p-3 border border-slate-800">
                             <h3 className="text-xs font-bold text-cyan-400 uppercase mb-2 flex items-center gap-2">
-                                <SparklesIcon className="w-3 h-3" /> AI Generator
+                                <SparklesIcon className="w-3 h-3" /> AI proposal
                             </h3>
                             <textarea 
                                 value={customPrompt}
                                 onChange={e => setCustomPrompt(e.target.value)}
-                                placeholder="Describe a custom threat (e.g. 'Flash flood in Manchester')..."
+                                placeholder="Describe a risk (e.g. 'river flooding of a city substation'). AI proposes the idea; you choose a sourced pattern for its numbers in the Library."
                                 className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs text-white h-20 resize-none mb-2 focus:border-cyan-500 outline-none"
                             />
                             <button 
@@ -602,7 +602,7 @@ const ScenarioManager: React.FC<ScenarioManagerProps> = ({ scenarios, onRunSimul
                                 className="w-full bg-cyan-900/30 hover:bg-cyan-900/50 text-cyan-400 border border-cyan-500/30 py-1.5 rounded text-xs font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
                             >
                                 {isGeneratingCustom ? <ArrowUpTrayIcon className="w-3 h-3 animate-spin" /> : <SparklesIcon className="w-3 h-3" />}
-                                Generate
+                                Propose
                             </button>
                         </div>
 
@@ -620,7 +620,7 @@ const ScenarioManager: React.FC<ScenarioManagerProps> = ({ scenarios, onRunSimul
                             onClick={onGenerateMore}
                             className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-sm font-bold flex items-center justify-center gap-2 transition-colors"
                         >
-                            <DocumentDuplicateIcon className="w-4 h-4" /> Auto-Generate Batch
+                            <DocumentDuplicateIcon className="w-4 h-4" /> Ask AI for ideas
                         </button>
 
                         <button 

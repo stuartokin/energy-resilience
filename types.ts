@@ -119,7 +119,9 @@ export interface RiskScenario {
     isUserCreated?: boolean;
     isNew?: boolean;
     lastUpdated?: number;
-    status?: 'New' | 'Updated' | 'User' | 'Standard';
+    status?: 'New' | 'Updated' | 'User' | 'Standard' | 'Proposal';
+    suggestedPattern?: string; // AI proposals: which library pattern the AI suggests modelling it on (the user decides)
+    basedOn?: string;          // id of the library scenario whose sourced numbers this one uses
     sources?: string[];
 
     // Phase 4: transparent impact model (services/impactModel.ts). Library scenarios have these.

@@ -149,6 +149,7 @@ const flowPopup = (l: FlowLink) => {
         `<div style="color:#64748b;font-size:9px;margin-top:4px">Source: ${l.kind === 'electricity' ? 'Elexon FUELINST (live, 5-minute)' : 'National Gas instantaneous flows (live, 2-minute); GW is converted at an assumed 39.5 MJ/m³'}. Route drawn is indicative.</div></div>`;
 };
 
+const IMPACT_LAYERS = ['impact-red', 'impact-red-line', 'impact-black'];
 const OSM_LAYERS = ['osm-plants-icon', 'osm-plants-fill', 'osm-substations-icon', 'osm-substations-fill', 'osm-generators', 'osm-generators-fill', 'osm-lines', 'osm-cables', 'osm-gas', 'osm-gas-sites', 'osm-demand'];
 
 const MapVisualization: React.FC<MapProps> = ({
@@ -173,8 +174,11 @@ const MapVisualization: React.FC<MapProps> = ({
     propsRef.current = { assets, onAssetSelect, onViewChange, regionalCarbon, placing, onPlace };
     const [units, setUnits] = useState<{ list: Unit[]; source: 'gsp' | 'dno' | 'none' }>({ list: [], source: 'none' });
     const resolvedRef = useRef<ScenarioUnits[]>([]);
-    const unitStateRef = useRef<Map<string, number>>(new Map());
-    const darkenTimers = useRef<Map<string, any>>(new Map());
+    // Animation of each area: current values, and keyframes being played
+    const unitAnim = useRef<Map<string, { r: number; k: number; col: string; target: string; start: number; from: { r: number; k: number }; frames: { at: number; r: number; k: number }[] }>>(new Map());
+    const everOff = useRef<Set<string>>(new Set());
+    const rafRef = useRef<number | null>(null);
+    const prevImpact = useRef(0);
 
     const isGrowthScenario = activeScenarios.some(s => s.category === 'Growth');
     const growthYear = isGrowthScenario ? 2015 + Math.floor(day / 6) : null;
@@ -438,18 +442,16 @@ const MapVisualization: React.FC<MapProps> = ({
             // Fallback impact circles (only when no area boundaries are available)
             map.addSource('impact', { type: 'geojson', data: emptyFC as any });
             map.addLayer({ id: 'impact-fill', type: 'fill', source: 'impact', paint: { 'fill-color': '#ef4444', 'fill-opacity': ['get', 'opacity'] } });
-            // Scenario footprint on Grid Supply Point areas: red haze, then lights out.
-            // State per area (feature-state 's'): 1 = in footprint (faint red haze), 2 = red haze (about to go dark / just restored), 3 = lights out
+            // Scenario power cuts on Grid Supply Point areas. Per-area feature-state, animated in code
+            // (MapLibre doesn't animate feature-state): r = red haze opacity, k = blackout opacity.
+            // These layers are moved to the very top once everything else is added, so a blacked-out area is
+            // literally black: only the coastline (the area's own edge against the sea) shows.
             map.addSource('impact-areas', { type: 'geojson', data: emptyFC as any, promoteId: 'id' });
-            const S: any = ['coalesce', ['feature-state', 's'], 0];
+            const R: any = ['coalesce', ['feature-state', 'r'], 0], K: any = ['coalesce', ['feature-state', 'k'], 0];
             const COL: any = ['coalesce', ['feature-state', 'col'], '#ef4444'];
-            map.addLayer({ id: 'impact-areas-fill', type: 'fill', source: 'impact-areas', paint: {
-                'fill-color': ['case', ['==', S, 3], '#020409', COL],
-                'fill-opacity': ['match', S, 3, 0.84, 2, 0.5, 1, 0.13, 0],
-                'fill-color-transition': { duration: 600 }, 'fill-opacity-transition': { duration: 600 } } as any });
-            map.addLayer({ id: 'impact-areas-line', type: 'line', source: 'impact-areas', paint: {
-                'line-color': COL, 'line-width': ['match', S, 3, 1.1, 2, 1.4, 0.6],
-                'line-opacity': ['match', S, 3, 0.75, 2, 0.95, 1, 0.35, 0] } as any });
+            map.addLayer({ id: 'impact-red', type: 'fill', source: 'impact-areas', paint: { 'fill-color': COL, 'fill-opacity': R, 'fill-antialias': false } as any });
+            map.addLayer({ id: 'impact-red-line', type: 'line', source: 'impact-areas', paint: { 'line-color': COL, 'line-width': 1, 'line-opacity': ['*', R, 1.2] } as any });
+            map.addLayer({ id: 'impact-black', type: 'fill', source: 'impact-areas', paint: { 'fill-color': '#000000', 'fill-opacity': K, 'fill-antialias': false } as any });
 
             map.addSource('asset-lines', { type: 'geojson', data: emptyFC as any });
             map.addLayer({ id: 'asset-lines', type: 'line', source: 'asset-lines', filter: ['!', ['to-boolean', ['get', 'dashed']]], paint: { 'line-color': ['get', 'color'], 'line-width': ['case', ['to-boolean', ['get', 'affected']], 4, 2], 'line-opacity': 0.75 } });
@@ -609,6 +611,7 @@ const MapVisualization: React.FC<MapProps> = ({
                 map.on('mouseleave', l, () => { map.getCanvas().style.cursor = ''; });
             });
 
+            [...IMPACT_LAYERS, 'energy-flows-base', 'energy-flows-dash', 'energy-flows-cut'].forEach(l => { if (map.getLayer(l)) map.moveLayer(l); });
             setReady(true);
         });
 
@@ -747,11 +750,10 @@ const MapVisualization: React.FC<MapProps> = ({
     useEffect(() => {
         const map = mapRef.current;
         if (!map || !ready) return;
-        darkenTimers.current.forEach(t => clearTimeout(t)); darkenTimers.current.clear();
         const src = map.getSource('impact-areas') as maplibregl.GeoJSONSource;
-        const prev = unitStateRef.current;
-        prev.forEach((_, id) => map.removeFeatureState({ source: 'impact-areas', id }));
-        unitStateRef.current = new Map();
+        unitAnim.current.forEach((_, id) => { try { map.removeFeatureState({ source: 'impact-areas', id }); } catch { /* gone */ } });
+        unitAnim.current = new Map();
+        everOff.current = new Set();
         resolvedRef.current = isGrowthScenario ? [] : activeScenarios.map(s => resolveFootprint(s, units.list));
         const seen = new Set<string>();
         const feats: any[] = [];
@@ -773,33 +775,65 @@ const MapVisualization: React.FC<MapProps> = ({
         }
     }, [scenarioKey, units, ready, isGrowthScenario]);
 
-    // State of each area at the current moment: newly affected areas glow red first, then go dark
+    // State of each area at the current moment. Losing power: red haze, then black. About to lose power:
+    // a faint red haze. Restored: the black fades back to normal.
+    const playAnimations = () => {
+        const map = mapRef.current;
+        if (!map || rafRef.current !== null) return;
+        const tick = () => {
+            const now = performance.now();
+            let busy = false;
+            unitAnim.current.forEach((a, id) => {
+                if (!a.frames.length) return;
+                const t = now - a.start;
+                let prevAt = 0, prev = a.from, done = true;
+                for (const f of a.frames) {
+                    if (t < f.at) {
+                        const u = (t - prevAt) / Math.max(1, f.at - prevAt);
+                        a.r = prev.r + (f.r - prev.r) * u; a.k = prev.k + (f.k - prev.k) * u;
+                        done = false; break;
+                    }
+                    prevAt = f.at; prev = f;
+                }
+                if (done) { const last = a.frames[a.frames.length - 1]; a.r = last.r; a.k = last.k; a.frames = []; } else busy = true;
+                try { map.setFeatureState({ source: 'impact-areas', id }, { r: a.r, k: a.k, col: a.col }); } catch { /* not loaded */ }
+            });
+            rafRef.current = busy ? requestAnimationFrame(tick) : null;
+        };
+        rafRef.current = requestAnimationFrame(tick);
+    };
     useEffect(() => {
         const map = mapRef.current;
         if (!map || !ready || !map.getSource('impact-areas')) return;
         const multi = activeScenarios.length > 1;
         const next = activeScenarios.length ? unitStates(resolvedRef.current, stepHours) : new Map();
-        const before = unitStateRef.current;
-        const set = (id: string, st: number, col: string) => { try { map.setFeatureState({ source: 'impact-areas', id }, { s: st, col }); } catch { /* not loaded yet */ } };
-        const after = new Map<string, number>();
-        resolvedRef.current.forEach((r, si) => r.units.forEach(u => { if (!after.has(u.id)) after.set(u.id, 1); }));
-        next.forEach((v, id) => after.set(id, v.state === 'off' ? 3 : v.state === 'edge' ? 2 : 1));
-        after.forEach((st, id) => {
-            const si = next.get(id)?.scenario ?? 0;
-            const col = multi ? SCENARIO_COLOURS[si % SCENARIO_COLOURS.length] : '#ef4444';
-            const was = before.get(id) || 0;
-            if (st === 3 && was < 3) {
-                // red haze before the lights go out
-                set(id, 2, col);
-                if (!darkenTimers.current.has(id)) darkenTimers.current.set(id, setTimeout(() => { darkenTimers.current.delete(id); if (unitStateRef.current.get(id) === 3) set(id, 3, col); }, 650));
-            } else {
-                if (st < 3 && darkenTimers.current.has(id)) { clearTimeout(darkenTimers.current.get(id)); darkenTimers.current.delete(id); }
-                set(id, st, col);
-            }
+        const ids = new Set<string>();
+        resolvedRef.current.forEach(r => r.units.forEach(u => ids.add(u.id)));
+        const reduce = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+        // A faint red haze warns of areas about to go dark only while the cuts are spreading, not during restoration
+        const rising = currentImpact > prevImpact.current;
+        prevImpact.current = currentImpact;
+        ids.forEach(id => {
+            const st = next.get(id);
+            const col = multi && st ? SCENARIO_COLOURS[st.scenario % SCENARIO_COLOURS.length] : '#ef4444';
+            // Areas already restored once don't glow red again before the next cut (except in rota, where they do)
+            const target = st?.state === 'off' ? 'off' : st?.state === 'edge' && rising && !everOff.current.has(id) ? 'edge' : 'normal';
+            let a = unitAnim.current.get(id);
+            if (!a) { a = { r: 0, k: 0, col, target: 'normal', start: 0, from: { r: 0, k: 0 }, frames: [] }; unitAnim.current.set(id, a); }
+            if (a.target === target && a.col === col) return;
+            const wasOff = a.target === 'off';
+            a.target = target; a.col = col; a.start = performance.now(); a.from = { r: a.r, k: a.k };
+            if (target === 'off') {
+                everOff.current.add(id);
+                a.frames = reduce ? [{ at: 1, r: 0, k: 1 }] : a.k > 0.5
+                    ? [{ at: 300, r: 0, k: 1 }]
+                    : [{ at: 220, r: 0.65, k: a.k }, { at: 480, r: 0.65, k: a.k }, { at: 850, r: 0, k: 1 }];
+            } else if (target === 'edge') a.frames = [{ at: 400, r: 0.28, k: 0 }];
+            else a.frames = [{ at: reduce ? 1 : wasOff ? 1400 : 400, r: 0, k: 0 }];
         });
-        unitStateRef.current = after;
+        playAnimations();
     }, [stepHours, scenarioKey, units, ready]);
-    useEffect(() => () => { darkenTimers.current.forEach(t => clearTimeout(t)); }, []);
+    useEffect(() => () => { if (rafRef.current !== null) cancelAnimationFrame(rafRef.current); }, []);
 
     // Fallback circles if no area boundaries are available at all
     useEffect(() => {
@@ -882,6 +916,7 @@ const MapVisualization: React.FC<MapProps> = ({
     // Power cuts
     useEffect(() => {
         if (!ready) return;
+        if (!filters.has('Power Cuts')) { setMarkers('outages', []); return; }
         const all = [...outages, ...(historicalOutages || [])].filter(o => typeof o.lat === 'number' && typeof o.lng === 'number' && !isNaN(o.lat));
         setMarkers('outages', all.map(o => {
             const planned = /^planned/i.test(String(o.description || ''));
@@ -892,7 +927,7 @@ const MapVisualization: React.FC<MapProps> = ({
                 popup: `<div style="min-width:200px;padding:10px 12px"><div style="font-weight:bold;margin-bottom:4px;color:#f87171">&#9888; ${esc(o.locationName)}</div><div style="font-size:12px">${esc(o.description)}</div><div style="font-size:12px;font-weight:bold;margin-top:4px">Customers affected: ${o.consumersAffected ? Number(o.consumersAffected).toLocaleString() : 'not published'}</div><div style="font-size:10px;color:#94a3b8">Status: ${esc(o.status)}</div><div style="font-size:10px;color:#94a3b8">Source: ${esc(o.source)}</div>${o.estRestoration && o.estRestoration !== 'TBC' ? `<div style="font-size:10px;color:#94a3b8">Est. restoration: ${esc(o.estRestoration)}</div>` : ''}</div>`,
             };
         }));
-    }, [outages, historicalOutages, ready]);
+    }, [outages, historicalOutages, ready, filters]);
 
     // Generator outages (Elexon REMIT), grouped by site
     useEffect(() => {

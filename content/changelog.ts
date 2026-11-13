@@ -6,6 +6,22 @@ export interface ChangeEntry { version: string; date: string; title: string; cha
 
 export const CHANGELOG: ChangeEntry[] = [
     {
+        version: '4.2.0',
+        date: '2026-11-13',
+        title: 'Scenario playback, AI proposals and a new tour',
+        changes: [
+            'Every run now starts with normal running, then the event hits. Playback slows down where things change, so you can see it happen.',
+            'Areas losing power glow red, then go fully black (only the coastline shows). As supplies return, they fade back to normal. A faint red only appears while cuts are spreading.',
+            'Fix: the number of dark areas now matches the modelled customers off exactly.',
+            'When a scenario runs, live power cuts, generator outages, data centres and the data-coverage hatching are hidden so more of GB can be seen. "Show them" (or Layers) puts them back, and Clear restores them.',
+            'Power cuts can now be turned on and off under Layers.',
+            'AI scenarios are now proposals only. AI suggests what could happen, with sources, but never numbers or locations. To use a proposal, you choose which sourced library scenario it is modelled on (for example Storm Arwen or North Hyde), and all the numbers come from that. AI no longer generates scenarios automatically; use "Ask AI for ideas" in the Library.',
+            'Older AI drafts saved in your browser are turned back into proposals, because their numbers came from AI.',
+            'New tour: ten short steps that open each part of the app as they describe it, in a card that does not cover the screen.',
+            'Removed the OT supply chain analysis tool (AI listing suppliers against energy companies), which did not fit the rule against naming suppliers.',
+        ],
+    },
+    {
         version: '4.1.0',
         date: '2026-11-13',
         title: 'Scenarios you can see: red haze, then lights out',

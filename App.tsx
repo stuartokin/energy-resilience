@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { 
-    RegionConfig, InfrastructureAsset, RiskScenario, TimelineStep, AssetType, SaveData, OutageEvent, GenerationMix, SupplyChainInsight, DNORegion, GeneratorOutage 
+    RegionConfig, InfrastructureAsset, RiskScenario, TimelineStep, AssetType, SaveData, OutageEvent, GenerationMix, DNORegion, GeneratorOutage 
 } from './types';
 import { 
     REGIONS, UK_ASSETS_SEED, ASSET_TYPES, INITIAL_SCENARIOS, UK_DNO_REGIONS,
@@ -10,8 +10,8 @@ import {
 import { 
     fetchEnergyInfrastructure, generateRiskScenarios, calculateScenarioImpact,
     generateVideoReportScript, generateNarratedAudio, generateSlideshowImages, fetchRealTimeOutages,
-    TOUR_SCRIPTS, getApiSystemStatus, fetchNESOPowerData, fetchHistoricalOutages, fetchGenerationMix,
-    generateSupplyChainAnalysis, searchInfrastructureAssets, loadDnoBoundaries, fetchGeneratorOutages, outageCoverageNow, OUTAGE_COVERAGE
+    getApiSystemStatus, fetchNESOPowerData, fetchHistoricalOutages, fetchGenerationMix,
+    searchInfrastructureAssets, loadDnoBoundaries, fetchGeneratorOutages, outageCoverageNow, OUTAGE_COVERAGE
 } from './services/geminiService';
 import MapVisualization from './components/MapVisualization';
 import ChatPanel from './components/ChatPanel';
@@ -23,7 +23,6 @@ import TourGuide from './components/TourGuide';
 import OutageListModal from './components/OutageListModal';
 import HelpModal from './components/HelpModal';
 import ReportModal from './components/ReportModal';
-import SupplyChainModal from './components/SupplyChainModal';
 import DraggablePanel from './components/DraggablePanel';
 import { useLayout, clearSavedLayout, applyFontSize, getFontSize, FONT_SIZES } from './components/layout';
 import { statusOf } from './services/health';
@@ -37,6 +36,7 @@ import { useWindows, AppMode, WinDef, FloatingWindow, SidePanel, MinimisedTray, 
 import { OverviewPanel, ElectricityPanel, OutagesPanel } from './components/panels/LivePanels';
 import { ScenarioLibraryPanel, ResultsPanel, ScenarioModelPanel } from './components/panels/ScenarioPanels';
 import { buildFlows, GW_PER_MCMD } from './services/flows';
+import { adoptProposal } from './content/scenarios';
 import { captionsFor, resolveRoutes, fleetOf, CutRoute, footprintOf, FOOTPRINT_NOTE, SCENARIO_COLOURS } from './services/footprint';
 import { buildTimeline, methodNote } from './services/impactModel';
 import { fetchInterconnectorFlows, fetchRegionalCarbon, fetchFloodWarnings, fetchGasSnapshot, fetchWeatherWarnings, fetchSystemWarnings, InterconnectorFlow, RegionalCarbon, FloodWarning, GasSnapshot, WeatherWarning, SystemWarning } from './services/liveSystems';
@@ -238,7 +238,7 @@ export const App: React.FC = () => {
     
     // UI Interactions
     const [selectedAsset, setSelectedAsset] = useState<InfrastructureAsset | null>(null);
-    const [visibleLayers, setVisibleLayers] = useState<Set<string>>(new Set(['Generation', 'Transmission', 'Interconnector', 'Distribution', 'Retail', 'DNO Regions', 'Generator Outages', 'Flood Warnings', 'Weather Warnings', 'Interconnector Flows', 'Data coverage']));
+    const [visibleLayers, setVisibleLayers] = useState<Set<string>>(new Set(['Generation', 'Transmission', 'Interconnector', 'Distribution', 'Retail', 'DNO Regions', 'Power Cuts', 'Generator Outages', 'Flood Warnings', 'Weather Warnings', 'Interconnector Flows', 'Data coverage']));
     const [selectedPointInfo, setSelectedPointInfo] = useState<TimelineStep | null>(null);
     const [mapCenterOverride, setMapCenterOverride] = useState<{lat: number, lng: number, zoom: number} | null>(null);
     const [customAssetQuery, setCustomAssetQuery] = useState("");
@@ -299,17 +299,14 @@ export const App: React.FC = () => {
     const [audioUrl, setAudioUrl] = useState<string | null>(null);
     const [reportImages, setReportImages] = useState<string[]>([]);
 
-    // Supply Chain Report
-    const [showSupplyChainModal, setShowSupplyChainModal] = useState(false);
-    const [supplyChainInsights, setSupplyChainInsights] = useState<SupplyChainInsight[]>([]);
-    const [isSupplyChainLoading, setIsSupplyChainLoading] = useState(false);
-    const [supplyChainProgress, setSupplyChainProgress] = useState(0);
 
     // Specific Reporting Progress
     const [isGeneratingReport, setIsGeneratingReport] = useState(false);
     const [reportGenerationStep, setReportGenerationStep] = useState(0); // 0: Idle, 1: Script, 2: Audio, 3: Visuals, 4: Done
 
-    const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const currentDayRef = useRef(0);
+    currentDayRef.current = currentDay;
     const mapDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const lastFetchCenterRef = useRef<{lat: number, lng: number} | null>(null);
     const lastActiveScenarioId = useRef<string | null>(null);
@@ -443,7 +440,10 @@ export const App: React.FC = () => {
         const saved = localStorage.getItem('custom_scenarios');
         if (saved) {
             try {
-                const parsed = JSON.parse(saved);
+                // Older AI drafts carried AI-supplied numbers: turn them back into proposals that need a sourced pattern
+                const parsed = (JSON.parse(saved) as RiskScenario[]).map(s => (!s.model && /^AI draft/.test(s.rationale || '')
+                    ? { ...s, status: 'Proposal' as const, peakConsumersAffected: 0, durationDays: 0, coordinates: undefined, locations: [], rationale: s.rationale!.replace(/^AI draft \(not checked\):/, 'AI proposal (not checked):').replace(/ Impact over time uses the simple default shape\.$/, '') }
+                    : s));
                 setScenarios(prev => {
                     const existingIds = new Set(prev.map(s => s.id));
                     const uniqueSaved = parsed.filter((s: RiskScenario) => !existingIds.has(s.id));
@@ -454,7 +454,7 @@ export const App: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        const userScenarios = scenarios.filter(s => s.status === 'User' || s.isUserCreated);
+        const userScenarios = scenarios.filter(s => s.status === 'User' || s.status === 'Proposal' || s.isUserCreated);
         if (userScenarios.length > 0) {
             localStorage.setItem('custom_scenarios', JSON.stringify(userScenarios));
         }
@@ -502,27 +502,27 @@ export const App: React.FC = () => {
 
     useEffect(() => {
         if (isPlaying && activeScenarios.length > 0) {
-            // Target duration: 10 seconds (10000ms) by default
-            const targetDurationMs = 20000; // slow enough to see the red haze before areas go dark
-            const totalSteps = Math.max(timeline.length, 1);
-            const baseInterval = targetDurationMs / totalSteps;
-            const intervalTime = baseInterval / playbackSpeed;
-
-            timerRef.current = setInterval(() => {
-                setCurrentDay(prev => {
-                    const next = prev + 1;
-                    if (next >= (timeline.length - 1)) {
-                        setIsPlaying(false);
-                        setChartMode('normal');
-                        return next;
-                    }
-                    return next;
-                });
-            }, intervalTime); 
+            // Playback dwells where things change: steps where customers go off or come back, and steps with a
+            // caption, get more time, so the red haze and lights going out can be seen. About 22 s in total at 1x.
+            const peak = Math.max(1, ...timeline.map(t => t.consumersOffline));
+            const capSteps = new Set(captionsFor(activeScenarios, timeline).map(c => timeline.findIndex(t => (t.hours ?? t.day) >= c.atHours - 1e-6)));
+            const w = timeline.map((t, i) => 1 + (i > 0 ? 8 * Math.abs(t.consumersOffline - timeline[i - 1].consumersOffline) / peak : 0) + (capSteps.has(i) ? 4 : 0));
+            const base = 22000 / Math.max(1, w.reduce((a, x) => a + x, 0));
+            const tick = () => {
+                const i = currentDayRef.current; // follows seeks made while playing
+                if (i >= timeline.length - 1) { setIsPlaying(false); setChartMode('normal'); return; }
+                timerRef.current = setTimeout(() => {
+                    const next = Math.min(timeline.length - 1, currentDayRef.current + 1);
+                    currentDayRef.current = next;
+                    setCurrentDay(next);
+                    tick();
+                }, Math.max(120, (base * (w[i + 1] ?? 1)) / playbackSpeed));
+            };
+            tick();
         } else if (timerRef.current) {
-            clearInterval(timerRef.current);
+            clearTimeout(timerRef.current);
         }
-        return () => { if (timerRef.current) clearInterval(timerRef.current); };
+        return () => { if (timerRef.current) clearTimeout(timerRef.current); };
     }, [isPlaying, activeScenarios, timeline, playbackSpeed]);
 
     const performDeepUpdate = async () => {
@@ -588,7 +588,7 @@ export const App: React.FC = () => {
         const seedAssets = activeRegion.id === 'UK' ? UK_ASSETS_SEED : [];
         setAssets(generationMix ? calculateAssetStatus(generationMix, seedAssets) : seedAssets);
         setScenarios(prev => {
-            const existingUser = prev.filter(s => s.status === 'User' || s.isUserCreated);
+            const existingUser = prev.filter(s => s.status === 'User' || s.status === 'Proposal' || s.isUserCreated);
             const seed = activeRegion.id === 'UK' ? INITIAL_SCENARIOS : [];
             const unique = new Map();
             [...seed, ...existingUser].forEach(s => unique.set(s.id, s));
@@ -619,21 +619,7 @@ export const App: React.FC = () => {
             setLastOutageCheck(new Date());
         } catch (e) { console.warn("Outage load failed", e); }
 
-        // 5. AI-generated scenarios only if the visitor has added a Gemini key.
-        if (!hasAiKey() || lastLoadedRegionIdRef.current !== regionId) return;
-        try {
-            setBackgroundTask("AI: generating risk scenarios...");
-            const newScenarios = await generateRiskScenarios(activeRegion.name, assetsRef.current);
-            setScenarios(prev => {
-                const unique = new Map();
-                [...prev, ...newScenarios].forEach(s => unique.set(s.id, s));
-                return Array.from(unique.values());
-            });
-        } catch (e: any) {
-            console.error("AI Scenario Gen Failed", e);
-        } finally {
-            setBackgroundTask(null);
-        }
+        // AI scenarios are no longer generated automatically: visitors ask for proposals in the Library.
     };
 
     const loadedAreasRef = useRef<{ lat: number, lng: number }[]>([]);
@@ -795,7 +781,7 @@ export const App: React.FC = () => {
         setIsPlaying(false);
         setTimeline([]);
         setChartMode('normal');
-        setVisibleLayers(new Set(['Generation', 'Transmission', 'Interconnector', 'Distribution', 'Retail', 'DNO Regions', 'Generator Outages', 'Flood Warnings', 'Weather Warnings', 'Interconnector Flows', 'Data coverage']));
+        setVisibleLayers(new Set(['Generation', 'Transmission', 'Interconnector', 'Distribution', 'Retail', 'DNO Regions', 'Power Cuts', 'Generator Outages', 'Flood Warnings', 'Weather Warnings', 'Interconnector Flows', 'Data coverage']));
         setActiveRegion(prev => ({...prev}));
         setMapCenterOverride({ lat: activeRegion.lat, lng: activeRegion.lng, zoom: activeRegion.zoom });
         setMinimizedPanels(new Set(INITIAL_MINIMIZED));
@@ -812,26 +798,11 @@ export const App: React.FC = () => {
         if (!requireAi()) return;
         setIsLoading(true);
         setLoadingProgress(20);
-        setLoadingMessage("AI Generating New Risk Scenarios...");
+        setLoadingMessage("AI: looking for scenario ideas (proposals only)...");
         try {
             const newScenarios = await generateRiskScenarios(activeRegion.name, assets);
             setLoadingProgress(80);
-            setScenarios((prev: RiskScenario[]) => {
-                const existingMap = new Map<string, RiskScenario>(prev.map((s: RiskScenario) => [s.id, s]));
-                const merged = [...prev];
-                newScenarios.forEach((newItem: RiskScenario) => {
-                    if (existingMap.has(newItem.id)) {
-                        const existing = existingMap.get(newItem.id)!;
-                        if (existing.status !== 'User') {
-                            const index = merged.findIndex(s => s.id === newItem.id);
-                            if (index !== -1) merged[index] = { ...newItem, status: 'Updated' };
-                        }
-                    } else {
-                        merged.push({ ...newItem, status: 'New' });
-                    }
-                });
-                return merged;
-            });
+            setScenarios(prev => [...prev, ...newScenarios]);
         } catch (e: any) {
              console.error("Failed to generate scenarios", e);
         }
@@ -903,24 +874,6 @@ export const App: React.FC = () => {
         setReportGenerationStep(0);
     };
 
-    const handleRunSupplyChainAnalysis = async () => {
-        if (!requireAi()) return;
-        setIsSupplyChainLoading(true);
-        setShowSupplyChainModal(true);
-        setSupplyChainProgress(10);
-        
-        // Simulate progressive loading
-        const timer = setInterval(() => {
-            setSupplyChainProgress(prev => Math.min(prev + 5, 80));
-        }, 500);
-
-        const results = await generateSupplyChainAnalysis(activeRegion.name);
-        
-        clearInterval(timer);
-        setSupplyChainProgress(100);
-        setSupplyChainInsights(results);
-        setIsSupplyChainLoading(false);
-    };
 
     const handleExportReport = () => {
         const reportData = {
@@ -1020,34 +973,29 @@ export const App: React.FC = () => {
         return currentDay >= timeline.length - 1;
     }, [currentDay, timeline]);
 
-    // Tour Step Handler
+    // Tour: each step opens the part of the app it describes (components/TourGuide.tsx)
     const handleTourStep = (step: string) => {
-        // Reset/Close specific panels to focus user attention
         setShowScenarioManager(false);
-        setShowSupplyChainModal(false);
         setShowHelp(false);
+        setShowReport(false);
         setSelectedAsset(null);
-        if (step !== 'analyst') setShowChat(false);
-
         switch (step) {
-            case 'asset_info':
-                if (assets.length > 0) setSelectedAsset(assets[0]);
+            case 'intro': switchMode('live'); break;
+            case 'live': switchMode('live'); openWin('overview', 'live'); break;
+            case 'map': switchMode('live'); openWin('layers', 'live'); break;
+            case 'flows': openWin('flows', 'live'); break;
+            case 'library': switchMode('scenarios'); openWin('library', 'scenarios'); break;
+            case 'run': {
+                switchMode('scenarios');
+                const demo = scenarios.find(s => s.id === 'st_windstorm_north');
+                if (!activeScenarios.length && demo) runScenarios([demo]);
+                else openWin('results', 'scenarios');
                 break;
-            case 'scenarios':
-                setShowScenarioManager(true);
-                break;
-            case 'analyst':
-                setShowChat(true);
-                break;
-            case 'supply_chain':
-                if (supplyChainInsights.length === 0 && !isSupplyChainLoading) {
-                    handleRunSupplyChainAnalysis();
-                }
-                setShowSupplyChainModal(true);
-                break;
-            case 'help':
-                setShowHelp(true);
-                break;
+            }
+            case 'results': switchMode('scenarios'); openWin('results', 'scenarios'); break;
+            case 'ai': openWin('analyst'); break;
+            case 'report': if (layoutMode === 'phone') setActiveSheet(null); break;
+            case 'help': setHelpInitialTab('guide'); setShowHelp(true); break;
         }
     };
 
@@ -1184,7 +1132,18 @@ export const App: React.FC = () => {
         setOverlayPanel(null);
         if (m === 'scenarios' && layoutMode !== 'phone') win.setActive('scenarios', activeScenarios.length ? 'results' : 'library');
     };
-    const runScenarios = (sel: RiskScenario[]) => {
+    // While a scenario runs, live clutter is hidden so more of GB can be seen (Layers puts any of it back)
+    const SCENARIO_HIDES = ['Power Cuts', 'Generator Outages', 'Retail', 'Data coverage'];
+    const hiddenForScenario = useRef<string[] | null>(null);
+    const runScenarios = (all: RiskScenario[]) => {
+        // AI proposals can't run until a sourced pattern has been chosen for their numbers
+        const sel = all.filter(s => !(s.status === 'Proposal' && !s.model));
+        if (!sel.length) { openWin('library'); return; }
+        if (hiddenForScenario.current === null) {
+            const hid = SCENARIO_HIDES.filter(l => visibleLayers.has(l));
+            hiddenForScenario.current = hid;
+            if (hid.length) setVisibleLayers(prev => { const n = new Set(prev); hid.forEach(l => n.delete(l)); return n; });
+        }
         handleRunSimulation(sel, false);
         setAppMode('scenarios');
         if (layoutMode === 'phone') setActiveSheet('results');
@@ -1197,6 +1156,9 @@ export const App: React.FC = () => {
         setCurrentDay(0);
         setCutRoutes([]);
         setPlacing(null);
+        const hid = hiddenForScenario.current;
+        hiddenForScenario.current = null;
+        if (hid?.length) setVisibleLayers(prev => { const n = new Set(prev); hid.forEach(l => n.add(l)); return n; });
     };
     const scenarioKey = activeScenarios.map(s => s.id).join(',');
     useEffect(() => {
@@ -1216,6 +1178,12 @@ export const App: React.FC = () => {
         if (layoutMode === 'phone') setActiveSheet(null);
         if (layoutMode === 'tablet') setOverlayPanel(null);
     };
+    const adopt = (id: string, patternId: string) => setScenarios(prev => prev.map(s => (s.id === id ? (adoptProposal(s, patternId) || s) : s)));
+    const discard = (id: string) => setScenarios(prev => {
+        const next = prev.filter(s => s.id !== id);
+        try { localStorage.setItem('custom_scenarios', JSON.stringify(next.filter(s => s.status === 'User' || s.status === 'Proposal' || s.isUserCreated))); } catch { /* storage unavailable */ }
+        return next;
+    });
     const handlePlace = (p: { lat: number; lng: number; label: string }) => {
         const sc = placing;
         if (!sc) return;
@@ -1284,6 +1252,7 @@ export const App: React.FC = () => {
             <div>
                 <div className="text-[10px] font-bold text-slate-400 tracking-wider mb-1">LIVE LAYERS</div>
                 {layerButton('Interconnector Flows', 'Energy flows (power and gas)', <span className="w-2.5 h-2.5 rounded-full bg-gradient-to-r from-cyan-400 to-amber-500" />)}
+                {layerButton('Power Cuts', 'Power cuts', <span className="w-2.5 h-2.5 rounded-full bg-red-500" />, 'Live power cuts from the network operators')}
                 {layerButton('Generator Outages', 'Generator outages', <span className="text-[8px] px-1 rounded border border-amber-500 bg-amber-900 text-amber-200 leading-tight">MW</span>, 'Elexon REMIT. Amber = unplanned.')}
                 {layerButton('Flood Warnings', 'Flood warnings', <span className="w-2.5 h-2.5 bg-blue-500" />)}
                 {layerButton('Weather Warnings', 'Weather warnings', <span className="w-0 h-0 border-l-[5px] border-l-transparent border-r-[5px] border-r-transparent border-b-[9px] border-b-yellow-400" />)}
@@ -1303,11 +1272,6 @@ export const App: React.FC = () => {
                     <input type="range" min="1" max="60" step="1" value={updateInterval} onChange={e => setUpdateInterval(Number(e.target.value))} disabled={!allowBackgroundUpdates} className="w-full accent-cyan-500" />
                 </label>
                 <button type="button" onClick={handleUpdateData} className="w-full flex items-center justify-center gap-2 bg-cyan-900/30 hover:bg-cyan-900/50 text-cyan-200 border border-cyan-500/30 py-2 rounded-lg font-semibold"><ArrowPathIcon className="w-3.5 h-3.5" /> Refresh everything now</button>
-            </div>
-            <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 space-y-2">
-                <b>Supply chain (AI)</b>
-                <p className="text-[11px] text-slate-400">{supplyChainInsights.length ? `${supplyChainInsights.length} risks identified.` : 'AI web search for supply-chain risks to the region (labelled as unverified).'}</p>
-                <button type="button" onClick={() => { setShowSupplyChainModal(true); if (supplyChainInsights.length === 0) handleRunSupplyChainAnalysis(); }} className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-semibold">{supplyChainInsights.length ? 'View details' : 'Run analysis'}</button>
             </div>
             {maintenanceAssets.length > 0 && <div className="bg-slate-900 border border-slate-800 rounded-lg p-3">
                 <b>Engineering work</b>
@@ -1340,7 +1304,7 @@ export const App: React.FC = () => {
         { id: 'systems', title: 'Notices, gas and weather', short: 'Systems', colour: '#06b6d4', icon: CloudIcon, modes: ['live'], width: 320,
           content: <LiveSystemsPanel flows={icFlows} gas={gas} weather={weatherWarnings} floods={floods} generatorOutages={generatorOutages} systemWarnings={systemWarnings} updated={liveSystemsUpdated} /> },
         { id: 'library', title: 'Scenario library', short: 'Library', colour: '#ef4444', icon: ListBulletIcon, modes: ['scenarios'], width: 420,
-          content: <ScenarioLibraryPanel scenarios={scenarios} running={activeScenarios} onRun={runScenarios} onManage={() => setShowScenarioManager(true)} onPlace={startPlacing} onClear={handleStopSimulation} /> },
+          content: <ScenarioLibraryPanel scenarios={scenarios} running={activeScenarios} onRun={runScenarios} onManage={() => setShowScenarioManager(true)} onPlace={startPlacing} onClear={handleStopSimulation} onAdopt={adopt} onDiscard={discard} onAskAi={handleGenerateMoreScenarios} aiOn={aiEnabled} /> },
         { id: 'results', title: activeScenarios.length > 1 ? 'Results: composite event' : 'Results', short: 'Results', colour: '#dc2626', icon: ChartBarIcon, modes: ['scenarios'], width: 440,
           content: <ResultsPanel active={activeScenarios} timeline={timeline} step={currentDay} onVideo={handleVideoBriefing} onReport={() => setShowReport(true)} onExport={handleQuickExport} onStop={handleStopSimulation} onLibrary={() => openWin('library')} cutRoutes={cutRoutes} footprint={footprintInfo} demandMW={nesoData.demand} gasSupplyGW={energyFlows.gasSupplyMcmd ? energyFlows.gasSupplyMcmd * GW_PER_MCMD : 0} /> },
         { id: 'model', title: 'Scenario model: values and sources', short: 'Model', colour: '#a855f7', icon: InformationCircleIcon, modes: ['scenarios'], width: 460,
@@ -1601,7 +1565,10 @@ export const App: React.FC = () => {
                                         <div className="text-[10px] font-bold tracking-wider text-red-300">{timeline[currentDay]?.label || ''} · {(timeline[currentDay]?.consumersOffline || 0).toLocaleString()} customers off</div>
                                         {caption && <div className="text-xs sm:text-sm text-slate-100 leading-snug">{caption.text}</div>}
                                     </div>
-                                    <div className="text-[10px] text-slate-400 bg-slate-950/80 rounded px-2 py-0.5">Modelled and illustrative: shaded areas are not a forecast of where cuts would fall</div>
+                                    <div className="text-[10px] text-slate-400 bg-slate-950/80 rounded px-2 py-0.5 text-center">Modelled and illustrative: shaded areas are not a forecast of where cuts would fall</div>
+                                    {!!hiddenForScenario.current?.length && hiddenForScenario.current.some(l => !visibleLayers.has(l)) && (
+                                        <div className="text-[10px] text-slate-400 bg-slate-950/80 rounded px-2 py-0.5 pointer-events-auto">Live power cuts, generator outages and data centres are hidden while this runs. <button type="button" onClick={() => setVisibleLayers(prev => { const n = new Set(prev); hiddenForScenario.current!.forEach(l => n.add(l)); return n; })} className="text-cyan-300 underline">Show them</button></div>
+                                    )}
                                 </div>
                             )}
                             {selectedAsset && (
@@ -1677,15 +1644,6 @@ export const App: React.FC = () => {
                 />
             )}
             
-            {showSupplyChainModal && (
-                <SupplyChainModal
-                    onClose={() => setShowSupplyChainModal(false)}
-                    insights={supplyChainInsights}
-                    isLoading={isSupplyChainLoading}
-                    progress={supplyChainProgress}
-                    regionName={`${activeRegion?.name || 'Region'}`}
-                />
-            )}
             
             {/* New Report Modal */}
             {showReportModal && (

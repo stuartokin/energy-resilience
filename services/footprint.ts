@@ -76,6 +76,8 @@ export const resolveFootprint = (s: RiskScenario, all: Unit[]): ScenarioUnits =>
         if (pattern === 'patches') o = 0.65 * hash(`${s.id}|${u.area}`) + 0.35 * h;
         order.set(u.id, o);
     });
+    // Use rank (0..1) rather than the raw score, so the share of areas dark exactly matches the share of customers off
+    [...order.entries()].sort((x, y) => x[1] - y[1]).forEach(([id], i, arr) => order.set(id, (i + 0.5) / arr.length));
     return { scenario: s, units, order, centre, label, perUnit: per };
 };
 
@@ -83,6 +85,7 @@ export type UnitState = 'off' | 'edge' | 'haze';
 // State of every affected unit at time t (hours). 'edge' = about to go dark or just restored (strong red haze).
 export const unitStates = (resolved: ScenarioUnits[], hours: number): Map<string, { state: UnitState; scenario: number }> => {
     const out = new Map<string, { state: UnitState; scenario: number }>();
+    if (hours < 0) return out; // before the event: everything normal
     const rank: Record<UnitState, number> = { haze: 1, edge: 2, off: 3 };
     resolved.forEach((r, si) => {
         if (!r.units.length) return;
@@ -113,6 +116,7 @@ export const captionsFor = (scenarios: RiskScenario[], timeline: { hours?: numbe
     scenarios.forEach(s => (s.events || []).forEach(e => caps.push({ atHours: e.atHours, text: e.text })));
     if (timeline.length > 1 && !scenarios.some(s => s.category === 'Growth')) {
         const peak = Math.max(...timeline.map(t => t.consumersOffline));
+        if (timeline[0].hours !== undefined && timeline[0].hours < 0) caps.push({ atHours: timeline[0].hours, text: 'Normal running: the system is balanced and all customers are on supply.' });
         if (peak > 0) {
             const iPeak = timeline.findIndex(t => t.consumersOffline === peak);
             const at = (i: number) => timeline[i].hours ?? i;

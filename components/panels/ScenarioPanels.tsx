@@ -6,6 +6,7 @@ import { ASSUMPTIONS, REFERENCE_EVENTS } from '../../content/assumptions';
 import { GAS_CV_NOTE } from '../../services/flows';
 import { ImpactChart } from '../Charts';
 import { footprintOf, CutRoute, FOOTPRINT_NOTE, SCENARIO_COLOURS } from '../../services/footprint';
+import { MODEL_PATTERNS } from '../../content/scenarios';
 import { fmtGW } from '../../services/flows';
 
 const CATS = ['Storm', 'Cyber', 'Asset Failure', 'Supply Chain', 'Geopolitical', 'Growth'];
@@ -30,13 +31,19 @@ export const WhyNumbers: React.FC<{ s: RiskScenario }> = ({ s }) => (
 const isLocal = (s: RiskScenario) => { const a = footprintOf(s).areas; return a === 'placeable' || (typeof a === 'object' && 'point' in a); };
 
 // ---------- Library ----------
-export const ScenarioLibraryPanel: React.FC<{ scenarios: RiskScenario[]; running: RiskScenario[]; onRun: (s: RiskScenario[]) => void; onManage: () => void; onPlace?: (s: RiskScenario) => void; onClear?: () => void }> = ({ scenarios, running, onRun, onManage, onPlace, onClear }) => {
+export const ScenarioLibraryPanel: React.FC<{
+    scenarios: RiskScenario[]; running: RiskScenario[]; onRun: (s: RiskScenario[]) => void; onManage: () => void; onPlace?: (s: RiskScenario) => void; onClear?: () => void;
+    onAdopt?: (id: string, patternId: string) => void; onDiscard?: (id: string) => void; onAskAi?: () => void; aiOn?: boolean;
+}> = ({ scenarios, running, onRun, onManage, onPlace, onClear, onAdopt, onDiscard, onAskAi, aiOn }) => {
+    const [pick, setPick] = useState<Record<string, string>>({});
     const [cat, setCat] = useState('All');
     const [q, setQ] = useState('');
     const [picked, setPicked] = useState<Set<string>>(new Set(running.map(s => s.id)));
     const [open, setOpen] = useState<string | null>(null);
-    const list = scenarios.filter(s => (cat === 'All' || s.category === cat) && (!q || `${s.name} ${s.description}`.toLowerCase().includes(q.toLowerCase())));
-    const basket = scenarios.filter(s => picked.has(s.id));
+    const isProposal = (s: RiskScenario) => s.status === 'Proposal' && !s.model;
+    const proposals = scenarios.filter(isProposal);
+    const list = scenarios.filter(s => !isProposal(s) && (cat === 'All' || s.category === cat) && (!q || `${s.name} ${s.description}`.toLowerCase().includes(q.toLowerCase())));
+    const basket = scenarios.filter(s => picked.has(s.id) && !isProposal(s));
     const peak = basket.reduce((a, s) => a + (s.category === 'Growth' ? 0 : peakOf(profileOf(s))), 0);
     const days = basket.length ? Math.max(...basket.map(s => horizonHours(profileOf(s)))) / 24 : 0;
     const toggle = (id: string) => setPicked(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -50,10 +57,39 @@ export const ScenarioLibraryPanel: React.FC<{ scenarios: RiskScenario[]; running
                 {['All', ...CATS].map(c => (
                     <button key={c} type="button" onClick={() => setCat(c)} aria-pressed={cat === c}
                         className={`px-2.5 py-1 rounded-full text-[11px] border ${cat === c ? 'border-red-500 bg-red-950/50 text-red-100' : 'border-slate-700 text-slate-300 hover:border-slate-500'}`}>
-                        {c === 'All' ? `All ${scenarios.length}` : c}
+                        {c === 'All' ? `All ${scenarios.length - proposals.length}` : c}
                     </button>
                 ))}
             </div>
+            {onAskAi && (
+                <div className="rounded-lg border border-violet-900/70 bg-violet-950/20 p-2.5 space-y-2">
+                    <div className="flex items-center gap-2">
+                        <div className="flex-1 text-[11px] text-violet-200"><b>AI proposals</b> <span className="text-violet-300/70">suggest what could happen; numbers always come from a sourced library scenario you choose.</span></div>
+                        <button type="button" onClick={onAskAi} className="shrink-0 px-2.5 py-1.5 rounded-lg border border-violet-700 text-[11px] text-violet-100 hover:bg-violet-900/50" title={aiOn ? 'Ask AI to propose new scenarios (uses your Gemini key)' : 'Needs your free Gemini key (AI: Off in the top bar)'}>Ask AI for ideas</button>
+                    </div>
+                    {proposals.map(s => {
+                        const chosen = pick[s.id] ?? s.suggestedPattern ?? '';
+                        return (
+                            <div key={s.id} className="rounded-lg border border-violet-800 bg-slate-900 p-2.5">
+                                <div className="text-[13px] font-semibold text-slate-100 leading-snug">{s.name} <span className="ml-1 px-1 rounded border border-violet-700 text-[10px] text-violet-300 align-middle">AI proposal, not checked</span></div>
+                                <p className="text-[11px] text-slate-400 mt-0.5">{s.description}</p>
+                                <button type="button" onClick={() => setOpen(open === s.id ? null : s.id)} className="text-[11px] text-cyan-300 hover:underline mt-1" aria-expanded={open === s.id}>{open === s.id ? 'Hide' : 'AI reasoning and sources'}</button>
+                                {open === s.id && <div className="mt-1.5 text-[11px] text-slate-400"><p className="mb-1">{s.narrative}</p><WhyNumbers s={s} /></div>}
+                                <label className="block text-[11px] text-slate-300 mt-2">Model it on (the numbers come from this sourced scenario):
+                                    <select value={chosen} onChange={e => setPick(p => ({ ...p, [s.id]: e.target.value }))} className="mt-1 w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-[11px] text-white">
+                                        <option value="">Choose a pattern…</option>
+                                        {MODEL_PATTERNS.map(p => <option key={p.id} value={p.id}>{p.label}{p.id === s.suggestedPattern ? ' (AI suggests)' : ''}</option>)}
+                                    </select>
+                                </label>
+                                <div className="flex gap-2 mt-2">
+                                    <button type="button" disabled={!chosen} onClick={() => onAdopt?.(s.id, chosen)} className="px-3 py-1.5 rounded-lg bg-violet-700 hover:bg-violet-600 disabled:opacity-40 text-white text-[11px] font-semibold">Add to library</button>
+                                    <button type="button" onClick={() => onDiscard?.(s.id)} className="px-3 py-1.5 rounded-lg border border-slate-700 text-[11px] text-slate-300 hover:text-white">Discard</button>
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
             <div className="flex flex-col gap-1.5">
                 {list.map(s => {
                     const on = picked.has(s.id);
@@ -70,6 +106,8 @@ export const ScenarioLibraryPanel: React.FC<{ scenarios: RiskScenario[]; running
                                         <span>{s.durationDays}d</span>
                                         <span>{s.probability} likelihood</span>
                                         {b ? <span className={`px-1 rounded border text-[10px] ${b[1]}`}>{b[0]}</span> : <span className="px-1 rounded border border-slate-700 text-[10px]">{/^AI draft/.test(s.rationale || '') ? 'AI draft' : 'No model'}</span>}
+                                        {s.basedOn && <span className="px-1 rounded border border-violet-800 text-[10px] text-violet-300">AI idea · sourced numbers</span>}
+                                        {s.status === 'User' && onDiscard && <button type="button" onClick={() => onDiscard(s.id)} className="text-[10px] text-slate-500 hover:text-red-300 underline">Remove</button>}
                                     </div>
                                     <div className="flex flex-wrap gap-x-3 mt-1">
                                         <button type="button" onClick={() => setOpen(open === s.id ? null : s.id)} className="text-[11px] text-cyan-300 hover:underline" aria-expanded={open === s.id}>{open === s.id ? 'Hide details' : 'Why these numbers?'}</button>
@@ -152,9 +190,9 @@ export const ResultsPanel: React.FC<{
                 <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 text-[11px] space-y-1.5">
                     <div className="font-semibold text-slate-200">Map key</div>
                     <div className="flex flex-wrap gap-x-3 gap-y-1 text-slate-300">
-                        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.5)' }} />Area in footprint</span>
-                        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ background: 'rgba(239,68,68,0.5)', border: '1px solid #ef4444' }} />Red haze: going dark or coming back</span>
-                        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ background: '#020409', border: '1px solid #ef4444' }} />Lights out</span>
+                        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ background: 'rgba(239,68,68,0.28)' }} />Faint red: cuts spreading towards here</span>
+                        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ background: 'rgba(239,68,68,0.65)' }} />Red haze: losing power</span>
+                        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm border border-slate-600" style={{ background: '#000' }} />Black: lights out (fades back when restored)</span>
                         {cutRoutes.length > 0 && <span className="flex items-center gap-1.5"><span className="w-4 border-t-2 border-dashed border-red-500" />Route cut</span>}
                     </div>
                     {active.length > 1 && <div className="flex flex-wrap gap-x-3 gap-y-1">{active.map((s, i) => <span key={s.id} className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: SCENARIO_COLOURS[i % SCENARIO_COLOURS.length] }} />{s.name}</span>)}</div>}

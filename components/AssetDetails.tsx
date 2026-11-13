@@ -87,7 +87,7 @@ const AssetDetails: React.FC<AssetDetailsProps> = ({ asset, regionName, onClose 
 
                     {!analysis ? (
                         <div className="py-8 flex flex-col items-center justify-center border-2 border-dashed border-slate-700 rounded-xl bg-slate-900/50">
-                            <p className="text-slate-400 mb-4 text-center max-w-xs">Run AI analysis to identify OT/SCADA suppliers, grid vulnerabilities, and economic risks.</p>
+                            <p className="text-slate-400 mb-4 text-center max-w-xs">Ask AI (your Gemini key) why this asset matters to the grid, the general risks for this type of asset, and the impact if it were unavailable. AI output is labelled and not checked.</p>
                             <button 
                                 onClick={handleAnalyze}
                                 disabled={loading}
